@@ -89,3 +89,7 @@ the shell — no external dependencies.
 ## License
 
 Apache-2.0, matching upstream hive.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, schema validation, packaging, and pull request guidelines.
