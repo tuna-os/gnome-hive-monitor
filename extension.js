@@ -233,8 +233,10 @@ class HiveIndicator extends PanelMenu.Button {
                 try {
                     bytes = session.send_and_read_finish(res);
                 } catch (e) {
-                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+                        console.error(`[HiveMonitor] Network error fetching widget status: ${e.message ?? e}`);
                         this._showError(_('Cannot reach the hive.'), String(e.message ?? e));
+                    }
                     return;
                 }
                 const code = msg.get_status();
@@ -242,18 +244,23 @@ class HiveIndicator extends PanelMenu.Button {
                     // Distinguished on purpose: "unreachable" and "your token is
                     // wrong" need different fixes, and a single generic error
                     // sends people to debug the network for an auth problem.
+                    console.error(`[HiveMonitor] Authentication rejected by hive (HTTP ${code})`);
                     this._showError(_('Hive rejected the token.'),
                         _('Check the hive token in Settings (HTTP %d).').format(code));
                     return;
                 }
                 if (code !== 200) {
+                    console.error(`[HiveMonitor] HTTP error from hive (HTTP ${code})`);
                     this._showError(_('Hive returned HTTP %d.').format(code), '');
                     return;
                 }
                 try {
                     const txt = new TextDecoder().decode(bytes.get_data());
-                    this._render(JSON.parse(txt));
+                    const data = JSON.parse(txt);
+                    console.debug(`[HiveMonitor] Successfully updated status (mode: ${data.mode ?? 'unknown'}, issues: ${data.issues ?? 0}, prs: ${data.prs ?? 0})`);
+                    this._render(data);
                 } catch (e) {
+                    console.error(`[HiveMonitor] Failed to parse hive JSON response: ${e.message ?? e}`);
                     this._showError(_('Unreadable response.'), String(e.message ?? e));
                 }
             });
@@ -351,8 +358,10 @@ class HiveIndicator extends PanelMenu.Button {
                 try {
                     bytes = session.send_and_read_finish(res);
                 } catch (e) {
-                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+                        console.error(`[HiveMonitor] Network error filing idea to GitHub: ${e.message ?? e}`);
                         Main.notify(_('Hive Monitor'), _('Could not file the idea: %s').format(String(e.message ?? e)));
+                    }
                     return;
                 }
                 const code = msg.get_status();
@@ -364,6 +373,7 @@ class HiveIndicator extends PanelMenu.Button {
                         if (j.html_url)
                             this._lastIssueUrl = j.html_url;
                     } catch { /* the issue exists either way */ }
+                    console.info(`[HiveMonitor] Successfully filed idea issue ${num} on repo ${repo}`);
                     Main.notify(_('Hive Monitor'),
                         _('Filed %s on %s.').format(num, repo));
                     // Ideas change the queue depth, so reflect it immediately
@@ -377,6 +387,7 @@ class HiveIndicator extends PanelMenu.Button {
                     if (j.message)
                         why = j.message;
                 } catch { /* keep the status code */ }
+                console.error(`[HiveMonitor] GitHub API error filing idea on ${repo}: ${why}`);
                 Main.notify(_('Hive Monitor'), _('GitHub refused the idea: %s').format(why));
             });
     }
