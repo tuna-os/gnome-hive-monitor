@@ -1,3 +1,4 @@
 # Build artifact from glib-compile-schemas; regenerated at install time.
 schemas/gschemas.compiled
 *.zip
+__pycache__/
