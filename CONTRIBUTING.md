@@ -82,3 +82,10 @@ gnome-extensions pack --force --extra-source=schemas/
 1. **Sign Your Commits**: All commits must follow the Developer Certificate of Origin (DCO) standard using `git commit -s`.
 2. **Atomic Changes**: Keep PRs focused on a single feature, bug fix, or documentation update.
 3. **Compatibility**: Ensure any new API usage remains compatible across the supported GNOME Shell versions (45–50).
+
+<!-- hive-contribute-plea: donated-compute appeal, keep in sync across repos -->
+## Contribute compute — no code needed
+
+No time to write code? You can still push this project's backlog forward. This repository is worked by a TunaOS AI-agent hive: lend the hive your AI subscription or API tokens and your machine runs contributor tasks from this project's backlog.
+
+- 🪸 [Contribute compute to the reef hive](https://reef.tunaos.org/contribute)
