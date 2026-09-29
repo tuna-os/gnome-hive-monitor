@@ -1,18 +1,18 @@
 # Contributing to Hive Monitor
 
-Thank you for your interest in contributing to Hive Monitor! This document provides guidelines for local development, schema validation, packaging, and submitting pull requests.
+Thank you for your interest in Hive Monitor! This document shows how to develop locally, check the schema, pack the extension, and send pull requests.
 
 ## Architecture and Requirements
 
-Hive Monitor is a GNOME Shell extension targeting GNOME Shell 45–50 using standard ECMAScript modules (ESM) and GObject Introspection (`gi://`).
+Hive Monitor is a GNOME Shell extension for GNOME Shell 45–50. It uses standard ECMAScript modules (ESM) and GObject Introspection (`gi://`).
 
 - **Target Shell Versions**: GNOME Shell 45, 46, 47, 48, 49, 50
 - **Language**: JavaScript (ESM format)
-- **Dependencies**: Uses standard `gi://` modules (`GLib`, `Gio`, `GObject`, `Clutter`, `St`, `Adw`, `Gtk`, `Soup`) shipping with GNOME Shell.
+- **Dependencies**: Uses standard `gi://` modules (`GLib`, `Gio`, `GObject`, `Clutter`, `St`, `Adw`, `Gtk`, `Soup`) that ship with GNOME Shell.
 
 ## Local Development Setup
 
-To test changes live against your local GNOME Shell session:
+To test changes live in a local session of GNOME Shell:
 
 1. Create a symlink from this repository directory into the user extensions folder:
 
@@ -27,7 +27,7 @@ ln -s "$(pwd)" ~/.local/share/gnome-shell/extensions/hive-monitor@tunaos.org
 glib-compile-schemas schemas/
 ```
 
-3. If this is the first time the extension is linked, log out and back in so GNOME Shell discovers the new extension directory (on Wayland, restarting the shell in place is not supported).
+3. If you link the extension for the first time, log out and back in. This lets GNOME Shell find the new extension directory. On Wayland, you cannot restart the shell in place.
 
 4. Enable the extension and open preferences:
 
@@ -36,7 +36,7 @@ gnome-extensions enable hive-monitor@tunaos.org
 gnome-extensions prefs hive-monitor@tunaos.org
 ```
 
-5. When testing updates to JavaScript files (`extension.js` or `prefs.js`), you can disable and re-enable the extension to load your changes without a full logout:
+5. To test updates to JavaScript files (`extension.js` or `prefs.js`), disable and re-enable the extension. This loads your changes without a full logout:
 
 ```bash
 gnome-extensions disable hive-monitor@tunaos.org
@@ -51,7 +51,7 @@ journalctl -f -o cat /usr/bin/gnome-shell
 
 ## Validation and Linting
 
-Before opening a pull request, run the following validation checks:
+Before you send a pull request, run these validation checks:
 
 ### 1. Schema Compilation Verification
 
