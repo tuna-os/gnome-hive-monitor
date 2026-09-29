@@ -32,6 +32,9 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {fetchWidgetStatus} from './hiveClient.js';
+import {fileIssue} from './githubClient.js';
+
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
 /* A single Soup session for the extension. Created once and cancelled on
@@ -220,50 +223,12 @@ class HiveIndicator extends PanelMenu.Button {
             return;
         }
 
-        const msg = Soup.Message.new('GET', `${url}/api/widget`);
-        if (!msg) {
-            this._setUnconfigured(_('That hive URL is not valid.'));
-            return;
-        }
-        msg.request_headers.append('X-Hive-Internal', token);
-
-        this._session.send_and_read_async(
-            msg, GLib.PRIORITY_DEFAULT, this._cancel, (session, res) => {
-                let bytes;
-                try {
-                    bytes = session.send_and_read_finish(res);
-                } catch (e) {
-                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                        console.error(`[HiveMonitor] Network error fetching widget status: ${e.message ?? e}`);
-                        this._showError(_('Cannot reach the hive.'), String(e.message ?? e));
-                    }
-                    return;
-                }
-                const code = msg.get_status();
-                if (code === 401 || code === 403) {
-                    // Distinguished on purpose: "unreachable" and "your token is
-                    // wrong" need different fixes, and a single generic error
-                    // sends people to debug the network for an auth problem.
-                    console.error(`[HiveMonitor] Authentication rejected by hive (HTTP ${code})`);
-                    this._showError(_('Hive rejected the token.'),
-                        _('Check the hive token in Settings (HTTP %d).').format(code));
-                    return;
-                }
-                if (code !== 200) {
-                    console.error(`[HiveMonitor] HTTP error from hive (HTTP ${code})`);
-                    this._showError(_('Hive returned HTTP %d.').format(code), '');
-                    return;
-                }
-                try {
-                    const txt = new TextDecoder().decode(bytes.get_data());
-                    const data = JSON.parse(txt);
-                    console.debug(`[HiveMonitor] Successfully updated status (mode: ${data.mode ?? 'unknown'}, issues: ${data.issues ?? 0}, prs: ${data.prs ?? 0})`);
-                    this._render(data);
-                } catch (e) {
-                    console.error(`[HiveMonitor] Failed to parse hive JSON response: ${e.message ?? e}`);
-                    this._showError(_('Unreadable response.'), String(e.message ?? e));
-                }
-            });
+        fetchWidgetStatus(this._session, this._cancel, url, token, {
+            onSuccess: data => this._render(data),
+            onInvalidUrl: message => this._setUnconfigured(message),
+            onError: (short, detail) => this._showError(short, detail),
+            onAuthError: (short, detail) => this._showError(short, detail),
+        });
     }
 
     _showError(short, detail) {
@@ -332,64 +297,18 @@ class HiveIndicator extends PanelMenu.Button {
         const labels = this._settings.get_string('idea-labels')
             .split(',').map(s => s.trim()).filter(s => s.length > 0);
 
-        const msg = Soup.Message.new('POST', `https://api.github.com/repos/${repo}/issues`);
-        if (!msg) {
-            Main.notify(_('Hive Monitor'), _('“%s” is not a valid owner/name.').format(repo));
-            return;
-        }
-        msg.request_headers.append('Authorization', `Bearer ${token}`);
-        msg.request_headers.append('Accept', 'application/vnd.github+json');
-        // GitHub 403s a request with no User-Agent, which reads as a bad token
-        // rather than a missing header. Always send one.
-        msg.request_headers.append('User-Agent', AGENT_URL);
-
-        const payload = JSON.stringify({
-            title,
-            body: `${body ? body + '\n\n' : ''}— filed from the GNOME Hive Monitor`,
-            labels,
+        fileIssue(this._session, this._cancel, repo, token, labels, title, body, {
+            onFiled: (num, htmlUrl) => {
+                if (htmlUrl)
+                    this._lastIssueUrl = htmlUrl;
+                Main.notify(_('Hive Monitor'),
+                    _('Filed %s on %s.').format(num, repo));
+                // Ideas change the queue depth, so reflect it immediately
+                // instead of waiting out the poll interval.
+                this._refresh();
+            },
+            onError: message => Main.notify(_('Hive Monitor'), message),
         });
-        msg.set_request_body_from_bytes(
-            'application/json',
-            new GLib.Bytes(new TextEncoder().encode(payload)));
-
-        this._session.send_and_read_async(
-            msg, GLib.PRIORITY_DEFAULT, this._cancel, (session, res) => {
-                let bytes;
-                try {
-                    bytes = session.send_and_read_finish(res);
-                } catch (e) {
-                    if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                        console.error(`[HiveMonitor] Network error filing idea to GitHub: ${e.message ?? e}`);
-                        Main.notify(_('Hive Monitor'), _('Could not file the idea: %s').format(String(e.message ?? e)));
-                    }
-                    return;
-                }
-                const code = msg.get_status();
-                if (code === 201) {
-                    let num = '';
-                    try {
-                        const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-                        num = j.number ? `#${j.number}` : '';
-                        if (j.html_url)
-                            this._lastIssueUrl = j.html_url;
-                    } catch { /* the issue exists either way */ }
-                    console.info(`[HiveMonitor] Successfully filed idea issue ${num} on repo ${repo}`);
-                    Main.notify(_('Hive Monitor'),
-                        _('Filed %s on %s.').format(num, repo));
-                    // Ideas change the queue depth, so reflect it immediately
-                    // instead of waiting out the poll interval.
-                    this._refresh();
-                    return;
-                }
-                let why = `HTTP ${code}`;
-                try {
-                    const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-                    if (j.message)
-                        why = j.message;
-                } catch { /* keep the status code */ }
-                console.error(`[HiveMonitor] GitHub API error filing idea on ${repo}: ${why}`);
-                Main.notify(_('Hive Monitor'), _('GitHub refused the idea: %s').format(why));
-            });
     }
 
     destroy() {
