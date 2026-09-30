@@ -19,98 +19,19 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
-import Soup from 'gi://Soup?version=3.0';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 
 import {
     Extension,
     gettext as _,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {fetchWidgetStatus} from './hiveClient.js';
-import {fileIssue} from './githubClient.js';
-
-const AGENT_URL = 'gnome-shell-hive-monitor/1';
-
-/* A single Soup session for the extension. Created once and cancelled on
- * disable(), so no request outlives the extension (the "no lingering async
- * work after disable" rule extensions get unlisted for breaking). */
-function newSession() {
-    const s = new Soup.Session({timeout: 15});
-    s.user_agent = AGENT_URL;
-    return s;
-}
-
-/* ── Idea entry dialog ────────────────────────────────────────────────── */
-const IdeaDialog = GObject.registerClass(
-class IdeaDialog extends ModalDialog.ModalDialog {
-    _init(onSubmit) {
-        super._init({styleClass: 'hive-idea-dialog'});
-        this._onSubmit = onSubmit;
-
-        const box = new St.BoxLayout({
-            vertical: true,
-            style: 'spacing: 12px; min-width: 420px;',
-        });
-        this.contentLayout.add_child(box);
-
-        box.add_child(new St.Label({
-            text: _('New idea'),
-            style: 'font-weight: 800; font-size: 1.1em;',
-        }));
-        box.add_child(new St.Label({
-            text: _('Becomes a labelled issue the hive can pick up.'),
-            style: 'color: rgba(255,255,255,0.7);',
-        }));
-
-        this._title = new St.Entry({
-            hint_text: _('Title'),
-            can_focus: true,
-            style: 'margin-top: 6px;',
-        });
-        box.add_child(this._title);
-
-        this._body = new St.Entry({
-            hint_text: _('Detail (optional)'),
-            can_focus: true,
-        });
-        // St.Entry is single-line; keep the body one line rather than pretend
-        // otherwise. Anything longer belongs in the issue itself on the web.
-        box.add_child(this._body);
-
-        this._status = new St.Label({text: '', style: 'color: #f66;'});
-        box.add_child(this._status);
-
-        this.setButtons([
-            {
-                label: _('Cancel'),
-                action: () => this.close(),
-                key: Clutter.KEY_Escape,
-            },
-            {
-                label: _('File Idea'),
-                action: () => this._submit(),
-                default: true,
-            },
-        ]);
-        this.setInitialKeyFocus(this._title.clutter_text);
-    }
-
-    _submit() {
-        const title = this._title.get_text().trim();
-        if (!title) {
-            this._status.set_text(_('A title is required.'));
-            return;
-        }
-        this.close();
-        this._onSubmit(title, this._body.get_text().trim());
-    }
-});
+import { HiveClient } from './client.js';
+import { IdeaDialog } from './dialog.js';
 
 /* ── Panel indicator ──────────────────────────────────────────────────── */
 const HiveIndicator = GObject.registerClass(
@@ -119,7 +40,7 @@ class HiveIndicator extends PanelMenu.Button {
         super._init(0.0, 'Hive Monitor');
         this._ext = ext;
         this._settings = ext.getSettings();
-        this._session = newSession();
+        this._client = new HiveClient();
         this._cancel = new Gio.Cancellable();
         this._timer = null;
         this._last = null;
@@ -223,11 +144,30 @@ class HiveIndicator extends PanelMenu.Button {
             return;
         }
 
-        fetchWidgetStatus(this._session, this._cancel, url, token, {
-            onSuccess: data => this._render(data),
-            onInvalidUrl: message => this._setUnconfigured(message),
-            onError: (short, detail) => this._showError(short, detail),
-            onAuthError: (short, detail) => this._showError(short, detail),
+        this._client.fetchWidget(url, token, this._cancel, (err, data, code) => {
+            if (err) {
+                if (err.message === 'INVALID_URL') {
+                    this._setUnconfigured(_('That hive URL is not valid.'));
+                    return;
+                }
+                this._showError(_('Cannot reach the hive.'), String(err.message ?? err));
+                return;
+            }
+
+            if (code === 401 || code === 403) {
+                // Distinguished on purpose: "unreachable" and "your token is
+                // wrong" need different fixes, and a single generic error
+                // sends people to debug the network for an auth problem.
+                this._showError(_('Hive rejected the token.'),
+                    _('Check the hive token in Settings (HTTP %d).').format(code));
+                return;
+            }
+            if (code !== 200 || !data) {
+                this._showError(_('Hive returned HTTP %d.').format(code), '');
+                return;
+            }
+
+            this._render(data);
         });
     }
 
@@ -297,17 +237,29 @@ class HiveIndicator extends PanelMenu.Button {
         const labels = this._settings.get_string('idea-labels')
             .split(',').map(s => s.trim()).filter(s => s.length > 0);
 
-        fileIssue(this._session, this._cancel, repo, token, labels, title, body, {
-            onFiled: (num, htmlUrl) => {
-                if (htmlUrl)
-                    this._lastIssueUrl = htmlUrl;
-                Main.notify(_('Hive Monitor'),
-                    _('Filed %s on %s.').format(num, repo));
-                // Ideas change the queue depth, so reflect it immediately
-                // instead of waiting out the poll interval.
-                this._refresh();
-            },
-            onError: message => Main.notify(_('Hive Monitor'), message),
+        this._client.fileIdea(repo, token, labels, title, body, this._cancel, (err, issue, code) => {
+            if (err) {
+                if (err.message === 'INVALID_REPO') {
+                    Main.notify(_('Hive Monitor'), _('“%s” is not a valid owner/name.').format(repo));
+                    return;
+                }
+                if (code !== 201) {
+                    Main.notify(_('Hive Monitor'), _('GitHub refused the idea: %s').format(err.message));
+                    return;
+                }
+                Main.notify(_('Hive Monitor'), _('Could not file the idea: %s').format(String(err.message ?? err)));
+                return;
+            }
+
+            const num = issue?.number ? `#${issue.number}` : '';
+            if (issue?.html_url)
+                this._lastIssueUrl = issue.html_url;
+
+            Main.notify(_('Hive Monitor'),
+                _('Filed %s on %s.').format(num, repo));
+            // Ideas change the queue depth, so reflect it immediately
+            // instead of waiting out the poll interval.
+            this._refresh();
         });
     }
 
@@ -323,8 +275,8 @@ class HiveIndicator extends PanelMenu.Button {
         // Cancel in-flight requests, then drop the session: a reply arriving
         // after destroy() would touch freed actors.
         this._cancel.cancel();
-        this._session?.abort();
-        this._session = null;
+        this._client?.abort();
+        this._client = null;
         super.destroy();
     }
 });
