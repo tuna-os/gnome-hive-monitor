@@ -20,13 +20,13 @@ Common log entries and actions:
 ### 2. Verify Extension State
 Check extension enablement state via `gsettings`:
 ```bash
-gnome-extensions info gnome-hive-monitor@tuna-os.org
+gnome-extensions info hive-monitor@tunaos.org
 ```
 
 To re-enable or reload:
 ```bash
-gnome-extensions disable gnome-hive-monitor@tuna-os.org
-gnome-extensions enable gnome-hive-monitor@tuna-os.org
+gnome-extensions disable hive-monitor@tunaos.org
+gnome-extensions enable hive-monitor@tunaos.org
 ```
 
 ## Escalation Path
