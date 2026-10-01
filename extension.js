@@ -120,9 +120,20 @@ class HiveIndicator extends PanelMenu.Button {
         this._ext = ext;
         this._settings = ext.getSettings();
         this._session = newSession();
-        this._cancel = new Gio.Cancellable();
+        // One cancellable per concern, not one for the extension. A settings
+        // change has to abort the in-flight status poll, and must NOT abort
+        // an idea POST the user already confirmed: that request targets
+        // GitHub, which a hive-url/hive-token edit says nothing about. A
+        // single shared cancellable cannot express that difference.
+        this._statusCancel = new Gio.Cancellable();
+        this._ideaCancel = new Gio.Cancellable();
         this._timer = null;
-        this._last = null;
+        // Bumped on every status request; a reply carrying a stale generation
+        // is dropped rather than rendered. Cancelling is not sufficient on its
+        // own: Soup can still deliver a reply that was already in flight when
+        // its cancellable was cancelled, and two overlapping polls can
+        // complete out of order.
+        this._statusGen = 0;
 
         const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
         this._icon = new St.Icon({
@@ -143,6 +154,7 @@ class HiveIndicator extends PanelMenu.Button {
         // Re-read on any settings change: a corrected URL or token should take
         // effect immediately, not after the next poll interval.
         this._settingsId = this._settings.connect('changed', () => {
+            this._abortStatus();
             this._restartTimer();
             this._refresh();
         });
@@ -192,6 +204,15 @@ class HiveIndicator extends PanelMenu.Button {
         return this._settings.get_string('hive-url').trim().replace(/\/+$/, '');
     }
 
+    /* Abort the in-flight status poll and invalidate its reply, so a status
+     * fetched with the previous URL or token can never render over one
+     * fetched with the current pair. Deliberately leaves the idea POST
+     * running. */
+    _abortStatus() {
+        this._statusCancel.cancel();
+        this._statusCancel = new Gio.Cancellable();
+    }
+
     _restartTimer() {
         if (this._timer) {
             GLib.Source.remove(this._timer);
@@ -223,11 +244,29 @@ class HiveIndicator extends PanelMenu.Button {
             return;
         }
 
-        fetchWidgetStatus(this._session, this._cancel, url, token, {
-            onSuccess: data => this._render(data),
-            onInvalidUrl: message => this._setUnconfigured(message),
-            onError: (short, detail) => this._showError(short, detail),
-            onAuthError: (short, detail) => this._showError(short, detail),
+        // Claim this generation before sending. Every outcome below is gated
+        // on still owning it, so the newest request is the only one that can
+        // touch the panel, whichever order the replies arrive in.
+        const gen = ++this._statusGen;
+        const current = () => gen === this._statusGen;
+
+        fetchWidgetStatus(this._session, this._statusCancel, url, token, {
+            onSuccess: data => {
+                if (current())
+                    this._render(data);
+            },
+            onInvalidUrl: message => {
+                if (current())
+                    this._setUnconfigured(message);
+            },
+            onError: (short, detail) => {
+                if (current())
+                    this._showError(short, detail);
+            },
+            onAuthError: (short, detail) => {
+                if (current())
+                    this._showError(short, detail);
+            },
         });
     }
 
@@ -239,7 +278,6 @@ class HiveIndicator extends PanelMenu.Button {
     }
 
     _render(d) {
-        this._last = d;
         const mode = String(d.mode ?? '?').toUpperCase();
         const issues = Number(d.issues ?? 0);
         const prs = Number(d.prs ?? 0);
@@ -297,10 +335,8 @@ class HiveIndicator extends PanelMenu.Button {
         const labels = this._settings.get_string('idea-labels')
             .split(',').map(s => s.trim()).filter(s => s.length > 0);
 
-        fileIssue(this._session, this._cancel, repo, token, labels, title, body, {
-            onFiled: (num, htmlUrl) => {
-                if (htmlUrl)
-                    this._lastIssueUrl = htmlUrl;
+        fileIssue(this._session, this._ideaCancel, repo, token, labels, title, body, {
+            onFiled: num => {
                 Main.notify(_('Hive Monitor'),
                     _('Filed %s on %s.').format(num, repo));
                 // Ideas change the queue depth, so reflect it immediately
@@ -322,7 +358,8 @@ class HiveIndicator extends PanelMenu.Button {
         }
         // Cancel in-flight requests, then drop the session: a reply arriving
         // after destroy() would touch freed actors.
-        this._cancel.cancel();
+        this._statusCancel.cancel();
+        this._ideaCancel.cancel();
         this._session?.abort();
         this._session = null;
         super.destroy();

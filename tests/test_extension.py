@@ -77,6 +77,135 @@ class TestGSettingsSchema(unittest.TestCase):
         self.assertEqual(range_tag.attrib.get("max"), "3600")
 
 
+class TestStatusRequestGeneration(unittest.TestCase):
+    """A status reply may only render if it is the newest one asked for.
+
+    Replicate the generation counter in HiveIndicator._refresh(): each request
+    takes the next generation, and a callback renders only while it still owns
+    the current one. Cancelling alone does not give this, because Soup can
+    deliver a reply that was already in flight when its cancellable was
+    cancelled, and two overlapping polls can finish out of order."""
+
+    class Indicator:
+        """The ordering logic of _refresh/_render with no GNOME Shell."""
+
+        def __init__(self):
+            self.gen = 0
+            self.rendered = []
+
+        def refresh(self):
+            """Send a request; returns its reply callback."""
+            self.gen += 1
+            mine = self.gen
+            def reply(data):
+                if mine == self.gen:
+                    self.rendered.append(data)
+            return reply
+
+    def test_newest_reply_renders(self):
+        ind = self.Indicator()
+        reply = ind.refresh()
+        reply("fresh")
+        self.assertEqual(ind.rendered, ["fresh"])
+
+    def test_stale_reply_is_dropped_after_settings_change(self):
+        ind = self.Indicator()
+        old = ind.refresh()          # poll with the old URL/token
+        new = ind.refresh()          # settings changed, poll again
+        new("fresh")
+        old("stale")                 # old reply lands last
+        self.assertEqual(ind.rendered, ["fresh"],
+                         "a reply from a superseded request must not render")
+
+    def test_out_of_order_replies_keep_the_newest(self):
+        ind = self.Indicator()
+        first = ind.refresh()
+        second = ind.refresh()
+        third = ind.refresh()
+        second("second")             # replies arrive in any order
+        third("third")
+        first("first")
+        self.assertEqual(ind.rendered, ["third"])
+
+    def test_every_outcome_is_gated_not_only_success(self):
+        """An error from a superseded request must not overwrite a good status
+        either: the error branches are gated the same way as success."""
+        ind = self.Indicator()
+        old = ind.refresh()
+        new = ind.refresh()
+        new("ok")
+        old("error: cannot reach the hive")
+        self.assertEqual(ind.rendered, ["ok"])
+
+    def test_source_claims_a_generation_per_request(self):
+        """Anchor the replica above to the code: the counter must exist and be
+        taken before the request is sent."""
+        source = (REPO_ROOT / "extension.js").read_text(encoding="utf-8")
+        self.assertIn("this._statusGen = 0;", source)
+        self.assertIn("const gen = ++this._statusGen;", source)
+
+    def test_source_gates_all_four_status_callbacks(self):
+        """fetchWidgetStatus has four outcomes. Each must check the generation,
+        or a stale reply reaches the panel through whichever one is unguarded."""
+        source = (REPO_ROOT / "extension.js").read_text(encoding="utf-8")
+        call = source[source.index("fetchWidgetStatus(this._session"):]
+        call = call[:call.index("\n    }")]
+        for cb in ("onSuccess", "onInvalidUrl", "onError", "onAuthError"):
+            self.assertIn(cb, call, f"{cb} must still be handled")
+        self.assertEqual(
+            call.count("if (current())"), 4,
+            "all four status outcomes must be gated on the current generation")
+
+
+class TestCancellableSeparation(unittest.TestCase):
+    """Status polling and idea filing must not share one cancellable.
+
+    A hive-url or hive-token edit aborts the status poll. It must not abort an
+    idea POST the user already confirmed, which goes to GitHub with a separate
+    credential. These are source assertions because the behaviour lives in
+    GJS/Soup calls this suite cannot execute."""
+
+    def setUp(self):
+        self.source = (REPO_ROOT / "extension.js").read_text(encoding="utf-8")
+
+    def test_two_distinct_cancellables_exist(self):
+        for name in ("_statusCancel", "_ideaCancel"):
+            self.assertIn(f"this.{name} = new Gio.Cancellable()", self.source,
+                          f"{name} must be its own Gio.Cancellable")
+
+    def test_no_single_shared_cancellable_remains(self):
+        self.assertNotRegex(
+            self.source, r"this\._cancel\b",
+            "the shared _cancel must be gone; a shared cancellable cannot "
+            "abort the status poll while leaving the idea POST running")
+
+    def test_status_fetch_uses_the_status_cancellable(self):
+        self.assertRegex(
+            self.source,
+            r"fetchWidgetStatus\(\s*this\._session,\s*this\._statusCancel",
+            "the status poll must be cancellable on its own")
+
+    def test_idea_post_uses_the_idea_cancellable(self):
+        self.assertRegex(
+            self.source,
+            r"fileIssue\(\s*this\._session,\s*this\._ideaCancel",
+            "filing an idea must not be cancelled by a hive settings edit")
+
+    def test_settings_change_aborts_only_the_status_poll(self):
+        self.assertIn("_abortStatus()", self.source,
+                      "the settings handler must abort the in-flight poll")
+        self.assertNotIn("this._ideaCancel.cancel();\n            this._restartTimer",
+                         self.source,
+                         "a settings edit must not cancel the idea POST")
+
+    def test_destroy_cancels_both(self):
+        tail = self.source[self.source.index("    destroy() {"):]
+        for name in ("_statusCancel", "_ideaCancel"):
+            self.assertIn(f"this.{name}.cancel();", tail,
+                          f"destroy() must cancel {name}, or a late reply "
+                          "touches freed actors")
+
+
 class TestExtensionLogic(unittest.TestCase):
     def test_ago_formatting_logic(self):
         """Replicate and verify the relative time formatting algorithm used in extension.js _ago(iso)."""
