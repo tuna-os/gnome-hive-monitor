@@ -15,13 +15,45 @@ import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js'
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
+/* A GitHub "owner/name" and nothing else.
+ *
+ * This value is pasted into the request path, so it decides which endpoint
+ * the token is sent to -- it is not just a label. GitHub's own rules for
+ * both halves are alphanumerics plus the separators below, so anything
+ * outside that set is rejected rather than escaped: "o/n#x" and "o/n?x"
+ * truncate the path at the fragment/query and POST somewhere else, and
+ * "a/b/../.." climbs out of /repos/ entirely.
+ *
+ * Kept deliberately strict: a stray character here is a typo to report, not
+ * input to repair. */
+const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
+
+/**
+ * Whether a string is a GitHub "owner/name" safe to place in a request path.
+ *
+ * Exported for the test suite; callers use fileIssue, which enforces it.
+ *
+ * @param {string} repo - the candidate "owner/name".
+ * @returns {boolean} true if repo is well formed.
+ */
+export function isValidRepo(repo) {
+    // '.' and '..' are legal against the regex but are path segments, not
+    // repository names.
+    if (typeof repo !== 'string' || repo.length > 512)
+        return false;
+    const name = repo.slice(repo.indexOf('/') + 1);
+    if (name === '.' || name === '..')
+        return false;
+    return REPO_RE.test(repo);
+}
+
 /**
  * File a new issue on a GitHub repo.
  *
  * @param {Soup.Session} session - the extension's shared Soup session.
  * @param {Gio.Cancellable} cancellable - cancelled on extension disable().
  * @param {string} repo - "owner/name", already validated non-empty by the
- *   caller.
+ *   caller. Rejected here unless it is a well-formed owner/name.
  * @param {string} token - the GitHub token, already validated non-empty by
  *   the caller.
  * @param {string[]} labels - labels to apply to the created issue.
@@ -36,6 +68,14 @@ const AGENT_URL = 'gnome-shell-hive-monitor/1';
  *   cancellation.
  */
 export function fileIssue(session, cancellable, repo, token, labels, title, body, {onFiled, onError}) {
+    // Before building the URL: Soup.Message.new() parses "o/n#x" and
+    // "a/b/../.." happily, so a null check here would not catch them. The
+    // token must not be sent to a path the repo field redirected.
+    if (!isValidRepo(repo)) {
+        onError(_('“%s” is not a valid owner/name.').format(repo));
+        return;
+    }
+
     const msg = Soup.Message.new('POST', `https://api.github.com/repos/${repo}/issues`);
     if (!msg) {
         onError(_('“%s” is not a valid owner/name.').format(repo));

@@ -77,6 +77,57 @@ class TestGSettingsSchema(unittest.TestCase):
         self.assertEqual(range_tag.attrib.get("max"), "3600")
 
 
+class TestRepoValidation(unittest.TestCase):
+    """github-repo is interpolated into the GitHub API request path, so it
+    decides which endpoint the token is POSTed to. Replicate the REPO_RE
+    guard in githubClient.js and check it rejects values that redirect the
+    path, not merely values that look untidy."""
+
+    # \Z, not $: Python's $ also matches just before a trailing newline, so
+    # "owner/name\n" would pass a $-anchored copy while correctly failing the
+    # JS original. The replica has to be as strict as the code it mirrors.
+    REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9._-]+\Z")
+
+    def is_valid_repo(self, repo):
+        if not isinstance(repo, str) or len(repo) > 512:
+            return False
+        name = repo[repo.find("/") + 1:]
+        if name in (".", ".."):
+            return False
+        return self.REPO_RE.match(repo) is not None
+
+    def test_accepts_well_formed_repos(self):
+        for repo in ["owner/name", "tuna-os/gnome-hive-monitor", "a/b",
+                     "user1/repo.js", "x-y/a_b-c.d", "A0/z9"]:
+            self.assertTrue(self.is_valid_repo(repo), f"should accept {repo!r}")
+
+    def test_rejects_path_escaping_repos(self):
+        # Each of these sends the POST somewhere other than
+        # /repos/<owner>/<name>/issues.
+        for repo in ["a/b/../../user/repos", "../../user/repos", "o/..",
+                     "x/y?", "o/n#frag", "o/n?x=1", "o/n/issues",
+                     "http://evil.example/a/b"]:
+            self.assertFalse(self.is_valid_repo(repo), f"should reject {repo!r}")
+
+    def test_rejects_malformed_repos(self):
+        for repo in ["", "o n", "/n", "o/", "o//n", "o/n ", "-o/n", "o/.",
+                     "o/n\n", "a" * 600 + "/b"]:
+            self.assertFalse(self.is_valid_repo(repo), f"should reject {repo!r}")
+
+    def test_client_enforces_validation_before_building_url(self):
+        """The guard must run before Soup.Message.new(), which parses the
+        escaping values above without complaint."""
+        src = (REPO_ROOT / "githubClient.js").read_text(encoding="utf-8")
+        self.assertIn("isValidRepo", src)
+        guard = src.find("if (!isValidRepo(repo))")
+        # The actual call, not the word in the comment above it.
+        request = src.find("Soup.Message.new('POST'")
+        self.assertNotEqual(guard, -1, "fileIssue must reject an invalid repo")
+        self.assertNotEqual(request, -1)
+        self.assertLess(guard, request,
+                        "repo must be validated before the request URL is built")
+
+
 class TestExtensionLogic(unittest.TestCase):
     def test_ago_formatting_logic(self):
         """Replicate and verify the relative time formatting algorithm used in extension.js _ago(iso)."""
