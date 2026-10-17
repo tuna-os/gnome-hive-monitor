@@ -15,6 +15,8 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import { validateHiveUrl, validateGithubRepo, validateLabels } from './config.js';
+
 export default class HiveMonitorPrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
@@ -34,7 +36,25 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
 
         const url = new Adw.EntryRow({title: _('Hive URL')});
         url.set_text(settings.get_string('hive-url'));
-        url.connect('changed', () => settings.set_string('hive-url', url.get_text()));
+        url.connect('changed', () => {
+            const text = url.get_text();
+            const result = validateHiveUrl(text);
+            settings.set_string('hive-url', text);
+            
+            // Visual feedback for validation
+            if (text && !result.valid) {
+                url.add_css_class('error');
+                if (url._errorLabel) url._errorLabel.destroy();
+                const errorLabel = new Gtk.Label({label: result.error, css_classes: ['error', 'caption']});
+                errorLabel._errorLabel = true;
+                url.get_parent().insert_child_after(errorLabel, url);
+                url._errorLabel = errorLabel;
+            } else if (url._errorLabel) {
+                url.remove_css_class('error');
+                url._errorLabel.destroy();
+                url._errorLabel = null;
+            }
+        });
         conn.add(url);
 
         const token = new Adw.PasswordEntryRow({title: _('Hive Token')});
@@ -81,7 +101,25 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
 
         const repo = new Adw.EntryRow({title: _('Repository')});
         repo.set_text(settings.get_string('github-repo'));
-        repo.connect('changed', () => settings.set_string('github-repo', repo.get_text()));
+        repo.connect('changed', () => {
+            const text = repo.get_text();
+            const result = validateGithubRepo(text);
+            settings.set_string('github-repo', text);
+            
+            // Visual feedback for validation
+            if (text && !result.valid) {
+                repo.add_css_class('error');
+                if (repo._errorLabel) repo._errorLabel.destroy();
+                const errorLabel = new Gtk.Label({label: result.error, css_classes: ['error', 'caption']});
+                errorLabel._errorLabel = true;
+                repo.get_parent().insert_child_after(errorLabel, repo);
+                repo._errorLabel = errorLabel;
+            } else if (repo._errorLabel) {
+                repo.remove_css_class('error');
+                repo._errorLabel.destroy();
+                repo._errorLabel = null;
+            }
+        });
         ideas.add(repo);
 
         const ghTok = new Adw.PasswordEntryRow({title: _('GitHub Token')});

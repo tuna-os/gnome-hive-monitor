@@ -34,6 +34,7 @@ import {
 
 import {fetchWidgetStatus} from './hiveClient.js';
 import {fileIssue} from './githubClient.js';
+import { validateHiveUrl } from './config.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -205,6 +206,11 @@ class HiveIndicator extends PanelMenu.Button {
         if (!raw)
             return '';
 
+        // Use centralized validation
+        const result = validateHiveUrl(raw);
+        if (!result.valid)
+            return '';
+
         // GJS has no WHATWG URL global; GLib.Uri is the available parser.
         let parsed;
         try {
@@ -212,12 +218,6 @@ class HiveIndicator extends PanelMenu.Button {
         } catch {
             return '';
         }
-
-        // The token is sent on every poll, so never over cleartext or with
-        // credentials embedded in the URL.
-        if (parsed.get_scheme()?.toLowerCase() !== 'https' ||
-            !parsed.get_host() || parsed.get_userinfo())
-            return '';
 
         return parsed.to_string().replace(/\/+$/, '');
     }
