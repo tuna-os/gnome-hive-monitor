@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: Validate source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install schema compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libglib2.0-bin
+
+      - name: Validate extension metadata
+        run: python3 -m json.tool metadata.json > /dev/null
+
+      - name: Validate GSettings schema
+        run: glib-compile-schemas --strict --dry-run schemas/
+
+      - name: Check JavaScript syntax
+        run: |
+          for file in extension.js githubClient.js hiveClient.js prefs.js; do
+            node --experimental-default-type=module --check "$file"
+          done
+
+      - name: Run unit tests
+        run: python3 -m unittest discover --start-directory tests

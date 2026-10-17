@@ -69,7 +69,25 @@ Verify that `metadata.json` is valid JSON and contains required extension metada
 python3 -m json.tool metadata.json > /dev/null
 ```
 
-### 3. Packaging Verification
+### 3. JavaScript Syntax Verification
+
+Parse every JavaScript module without loading GNOME Shell:
+
+```bash
+for file in extension.js githubClient.js hiveClient.js prefs.js; do
+  node --experimental-default-type=module --check "$file"
+done
+```
+
+### 4. Unit Tests
+
+Run the repository's metadata, schema, and source-level regression tests:
+
+```bash
+python3 -m unittest discover --start-directory tests
+```
+
+### 5. Packaging Verification
 
 Ensure the extension can be packed cleanly using `gnome-extensions pack`:
 
