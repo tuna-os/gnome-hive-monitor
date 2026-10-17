@@ -33,6 +33,7 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         page.add(conn);
 
         const url = new Adw.EntryRow({title: _('Hive URL')});
+        url.set_placeholder_text(_('https://example.com'));
         url.set_text(settings.get_string('hive-url'));
         url.connect('changed', () => settings.set_string('hive-url', url.get_text()));
         conn.add(url);
