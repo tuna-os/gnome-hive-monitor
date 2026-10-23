@@ -7,11 +7,11 @@
  * whichever outcome it gets; it does not itself touch Soup.
  */
 
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {HttpError, handleSoupFinish, parseJson} from './httpUtils.js';
 
 /**
  * Fetch the hive's compact status widget.
@@ -55,14 +55,15 @@ export function fetchWidgetStatus(session, cancellable, url, token, {onSuccess, 
         msg, GLib.PRIORITY_DEFAULT, cancellable, (session_, res) => {
             let bytes;
             try {
-                bytes = session_.send_and_read_finish(res);
-            } catch (e) {
-                if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                    console.error(`[HiveMonitor] Network error fetching widget status: ${e.message ?? e}`);
-                    onError(_('Cannot reach the hive.'), String(e.message ?? e));
-                }
+                bytes = handleSoupFinish(session_, res);
+            } catch (err) {
+                if (err instanceof HttpError && err.type === 'cancelled')
+                    return; // Silently ignore cancellation.
+                console.error(`[HiveMonitor] Network error fetching widget status: ${err.detail || err.message}`);
+                onError(_('Cannot reach the hive.'), err.message);
                 return;
             }
+
             const code = msg.get_status();
             if (code === 401 || code === 403) {
                 // Distinguished on purpose: "unreachable" and "your token is
@@ -78,14 +79,14 @@ export function fetchWidgetStatus(session, cancellable, url, token, {onSuccess, 
                 onError(_('Hive returned HTTP %d.').format(code), '');
                 return;
             }
+
             try {
-                const txt = new TextDecoder().decode(bytes.get_data());
-                const data = JSON.parse(txt);
+                const data = parseJson(bytes);
                 console.debug(`[HiveMonitor] Successfully updated status (mode: ${data.mode ?? 'unknown'}, issues: ${data.issues ?? 0}, prs: ${data.prs ?? 0})`);
                 onSuccess(data);
-            } catch (e) {
-                console.error(`[HiveMonitor] Failed to parse hive JSON response: ${e.message ?? e}`);
-                onError(_('Unreadable response.'), String(e.message ?? e));
+            } catch (err) {
+                console.error(`[HiveMonitor] Failed to parse hive JSON response: ${err.detail || err.message}`);
+                onError(_('Unreadable response.'), err.message);
             }
         });
 }
