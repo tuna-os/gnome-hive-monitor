@@ -34,6 +34,7 @@ import {
 
 import {fetchWidgetStatus} from './hiveClient.js';
 import {fileIssue} from './githubClient.js';
+import {IdeaFormValidator, IdeaSubmitter} from './ideaForm.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -102,13 +103,14 @@ class IdeaDialog extends ModalDialog.ModalDialog {
     }
 
     _submit() {
-        const title = this._title.get_text().trim();
-        if (!title) {
+        const {value, errors} = IdeaFormValidator.validate(
+            this._title.get_text(), this._body.get_text());
+        if (errors.length) {
             this._status.set_text(_('A title is required.'));
             return;
         }
         this.close();
-        this._onSubmit(title, this._body.get_text().trim());
+        this._onSubmit(value.title, value.body);
     }
 });
 
@@ -353,15 +355,22 @@ class HiveIndicator extends PanelMenu.Button {
         const labels = this._settings.get_string('idea-labels')
             .split(',').map(s => s.trim()).filter(s => s.length > 0);
 
-        fileIssue(this._session, this._ideaCancel, repo, token, labels, title, body, {
-            onFiled: num => {
-                Main.notify(_('Hive Monitor'),
-                    _('Filed %s on %s.').format(num, repo));
-                // Ideas change the queue depth, so reflect it immediately
-                // instead of waiting out the poll interval.
-                this._refresh();
-            },
-            onError: message => Main.notify(_('Hive Monitor'), message),
+        const submitter = new IdeaSubmitter((value, callbacks) => {
+            fileIssue(this._session, this._ideaCancel, repo, token, labels,
+                value.title, value.body, callbacks);
+        });
+        submitter.submit(title, body).then(({number}) => {
+            // Promise reactions run later than the transport callback. The
+            // extension may have been disabled in between.
+            if (this._ideaCancel.is_cancelled())
+                return;
+            Main.notify(_('Hive Monitor'),
+                _('Filed %s on %s.').format(number, repo));
+            // Ideas change the queue depth, so reflect it immediately.
+            this._refresh();
+        }).catch(error => {
+            if (!this._ideaCancel.is_cancelled())
+                Main.notify(_('Hive Monitor'), error.message);
         });
     }
 
