@@ -34,6 +34,7 @@ import {
 
 import {fetchWidgetStatus} from './hiveClient.js';
 import {fileIssue} from './githubClient.js';
+import {loadToken} from './credentials.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -250,9 +251,20 @@ class HiveIndicator extends PanelMenu.Button {
         this._detailItem.label.set_text(_('Open Settings to configure.'));
     }
 
-    _refresh() {
+    async _refresh() {
+        const gen = ++this._statusGen;
+        const current = () => gen === this._statusGen && !this._destroyed;
         const url = this._url();
-        const token = this._settings.get_string('hive-token').trim();
+        let token;
+        try {
+            token = (await loadToken(this._settings, 'hive', this._statusCancel)).trim();
+        } catch {
+            if (current())
+                this._showError(_('Could not read token from keyring.'), _('Open Settings to retry.'));
+            return;
+        }
+        if (!current())
+            return;
         if (!url) {
             this._setUnconfigured(_('No hive URL set.'));
             return;
@@ -265,8 +277,6 @@ class HiveIndicator extends PanelMenu.Button {
         // Claim this generation before sending. Every outcome below is gated
         // on still owning it, so the newest request is the only one that can
         // touch the panel, whichever order the replies arrive in.
-        const gen = ++this._statusGen;
-        const current = () => gen === this._statusGen;
 
         fetchWidgetStatus(this._session, this._statusCancel, url, token, {
             onSuccess: data => {
@@ -337,9 +347,18 @@ class HiveIndicator extends PanelMenu.Button {
         return _('%dh ago').format(Math.round(s / 3600));
     }
 
-    _openIdeaDialog() {
+    async _openIdeaDialog() {
         const repo = this._settings.get_string('github-repo').trim();
-        const tok = this._settings.get_string('github-token').trim();
+        let tok;
+        try {
+            tok = (await loadToken(this._settings, 'github', this._ideaCancel)).trim();
+        } catch {
+            if (!this._destroyed)
+                Main.notify(_('Hive Monitor'), _('Could not read GitHub token from keyring. Open Settings to retry.'));
+            return;
+        }
+        if (this._destroyed)
+            return;
         if (!repo || !tok) {
             Main.notify(_('Hive Monitor'),
                 _('Set a repository and GitHub token in Settings first.'));
@@ -366,6 +385,7 @@ class HiveIndicator extends PanelMenu.Button {
     }
 
     destroy() {
+        this._destroyed = true;
         if (this._timer) {
             GLib.Source.remove(this._timer);
             this._timer = null;
