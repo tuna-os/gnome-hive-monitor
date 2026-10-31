@@ -76,7 +76,7 @@ glib-compile-schemas --strict --dry-run schemas/
 
 ### 2. Extension Metadata Validation
 
-Verify that `metadata.json` is valid JSON and contains required extension metadata keys:
+Verify that `metadata.json` is valid JSON and contains the required keys for extension metadata:
 
 ```bash
 python3 -m json.tool metadata.json > /dev/null
@@ -84,7 +84,7 @@ python3 -m json.tool metadata.json > /dev/null
 
 ### 3. Packaging Verification
 
-Ensure the extension can be packed cleanly using `gnome-extensions pack`:
+Verify that `gnome-extensions pack` can pack the extension:
 
 ```bash
 gnome-extensions pack --force --extra-source=schemas/
@@ -94,4 +94,4 @@ gnome-extensions pack --force --extra-source=schemas/
 
 1. **Sign Your Commits**: All commits must follow the Developer Certificate of Origin (DCO) standard using `git commit -s`.
 2. **Atomic Changes**: Keep PRs focused on a single feature, bug fix, or documentation update.
-3. **Compatibility**: Ensure any new API usage remains compatible across the supported GNOME Shell versions (45–50).
+3. **Compatibility**: Ensure any new API usage remains compatible with GNOME Shell versions 45–50.
