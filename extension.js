@@ -34,6 +34,7 @@ import {
 
 import {fetchWidgetStatus} from './hiveClient.js';
 import {fileIssue} from './githubClient.js';
+import {validateSettings, normalizeHiveUrl, parseLabels, STATUS_FIELDS, IDEA_FIELDS} from './settingsValidation.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -201,25 +202,7 @@ class HiveIndicator extends PanelMenu.Button {
     }
 
     _url() {
-        const raw = this._settings.get_string('hive-url').trim();
-        if (!raw)
-            return '';
-
-        // GJS has no WHATWG URL global; GLib.Uri is the available parser.
-        let parsed;
-        try {
-            parsed = GLib.Uri.parse(raw, GLib.UriFlags.NONE);
-        } catch {
-            return '';
-        }
-
-        // The token is sent on every poll, so never over cleartext or with
-        // credentials embedded in the URL.
-        if (parsed.get_scheme()?.toLowerCase() !== 'https' ||
-            !parsed.get_host() || parsed.get_userinfo())
-            return '';
-
-        return parsed.to_string().replace(/\/+$/, '');
+        return normalizeHiveUrl(this._settings.get_string('hive-url'));
     }
 
     /* Abort the in-flight status poll and invalidate its reply, so a status
@@ -251,16 +234,13 @@ class HiveIndicator extends PanelMenu.Button {
     }
 
     _refresh() {
+        const validation = validateSettings(this._settings, STATUS_FIELDS);
+        if (!validation.valid) {
+            this._setUnconfigured(validation.errors[0].message);
+            return;
+        }
         const url = this._url();
         const token = this._settings.get_string('hive-token').trim();
-        if (!url) {
-            this._setUnconfigured(_('No hive URL set.'));
-            return;
-        }
-        if (!token) {
-            this._setUnconfigured(_('No hive token set.'));
-            return;
-        }
 
         // Claim this generation before sending. Every outcome below is gated
         // on still owning it, so the newest request is the only one that can
@@ -340,9 +320,10 @@ class HiveIndicator extends PanelMenu.Button {
     _openIdeaDialog() {
         const repo = this._settings.get_string('github-repo').trim();
         const tok = this._settings.get_string('github-token').trim();
-        if (!repo || !tok) {
+        const validation = validateSettings(this._settings, IDEA_FIELDS);
+        if (!validation.valid) {
             Main.notify(_('Hive Monitor'),
-                _('Set a repository and GitHub token in Settings first.'));
+                validation.errors[0].message);
             this._ext.openPreferences();
             return;
         }
@@ -350,8 +331,7 @@ class HiveIndicator extends PanelMenu.Button {
     }
 
     _fileIdea(repo, token, title, body) {
-        const labels = this._settings.get_string('idea-labels')
-            .split(',').map(s => s.trim()).filter(s => s.length > 0);
+        const labels = parseLabels(this._settings.get_string('idea-labels'));
 
         fileIssue(this._session, this._ideaCancel, repo, token, labels, title, body, {
             onFiled: num => {

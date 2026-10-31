@@ -15,6 +15,28 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import {validateSetting, POLL_MIN, POLL_MAX} from './settingsValidation.js';
+
+// Keep incomplete edits visible, but never replace a saved value with invalid
+// input. Clearing a field is allowed so users can disable either feature.
+function connectValidatedEntry(settings, row, field, group) {
+    const feedback = new Adw.ActionRow({visible: false, activatable: false});
+    group.add(row);
+    group.add(feedback);
+    row.connect('changed', () => {
+        const value = row.get_text();
+        const error = validateSetting(field, value, {required: false});
+        feedback.set_title(error ? `${error} ${_('Changes were not saved.')}` : '');
+        feedback.set_visible(Boolean(error));
+        if (error) {
+            row.add_css_class('error');
+        } else {
+            row.remove_css_class('error');
+            settings.set_string(field, value);
+        }
+    });
+}
+
 export default class HiveMonitorPrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
@@ -35,13 +57,11 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         const url = new Adw.EntryRow({title: _('Hive URL')});
         url.set_placeholder_text(_('https://example.com'));
         url.set_text(settings.get_string('hive-url'));
-        url.connect('changed', () => settings.set_string('hive-url', url.get_text()));
-        conn.add(url);
+        connectValidatedEntry(settings, url, 'hive-url', conn);
 
         const token = new Adw.PasswordEntryRow({title: _('Hive Token')});
         token.set_text(settings.get_string('hive-token'));
-        token.connect('changed', () => settings.set_string('hive-token', token.get_text()));
-        conn.add(token);
+        connectValidatedEntry(settings, token, 'hive-token', conn);
 
         const hint = new Adw.ActionRow({
             title: _('Where the token comes from'),
@@ -55,11 +75,16 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
             title: _('Refresh Interval'),
             subtitle: _('Seconds between status checks.'),
             adjustment: new Gtk.Adjustment({
-                lower: 15, upper: 3600, step_increment: 15, page_increment: 60,
+                lower: POLL_MIN, upper: POLL_MAX, step_increment: 15, page_increment: 60,
             }),
             numeric: true,
         });
-        settings.bind('poll-seconds', poll, 'value', Gio.SettingsBindFlags.DEFAULT);
+        poll.set_value(settings.get_int('poll-seconds'));
+        poll.connect('notify::value', () => {
+            const value = poll.get_value();
+            if (!validateSetting('poll-seconds', value))
+                settings.set_int('poll-seconds', value);
+        });
         conn.add(poll);
 
         // ── Appearance ────────────────────────────────────────────────
@@ -82,18 +107,15 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
 
         const repo = new Adw.EntryRow({title: _('Repository')});
         repo.set_text(settings.get_string('github-repo'));
-        repo.connect('changed', () => settings.set_string('github-repo', repo.get_text()));
-        ideas.add(repo);
+        connectValidatedEntry(settings, repo, 'github-repo', ideas);
 
         const ghTok = new Adw.PasswordEntryRow({title: _('GitHub Token')});
         ghTok.set_text(settings.get_string('github-token'));
-        ghTok.connect('changed', () => settings.set_string('github-token', ghTok.get_text()));
-        ideas.add(ghTok);
+        connectValidatedEntry(settings, ghTok, 'github-token', ideas);
 
         const labels = new Adw.EntryRow({title: _('Labels')});
         labels.set_text(settings.get_string('idea-labels'));
-        labels.connect('changed', () => settings.set_string('idea-labels', labels.get_text()));
-        ideas.add(labels);
+        connectValidatedEntry(settings, labels, 'idea-labels', ideas);
 
         const labelHint = new Adw.ActionRow({
             title: _('About the default label'),
