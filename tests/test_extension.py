@@ -126,8 +126,8 @@ class TestRepoValidation(unittest.TestCase):
         src = (REPO_ROOT / "githubClient.js").read_text(encoding="utf-8")
         self.assertIn("isValidRepo", src)
         guard = src.find("if (!isValidRepo(repo))")
-        # The actual call, not the word in the comment above it.
-        request = src.find("Soup.Message.new('POST'")
+        # The shared transport call must follow the repo guard.
+        request = src.find("makeRequest(session, 'POST'")
         self.assertNotEqual(guard, -1, "fileIssue must reject an invalid repo")
         self.assertNotEqual(request, -1)
         self.assertLess(guard, request,

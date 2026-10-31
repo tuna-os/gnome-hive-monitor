@@ -7,9 +7,7 @@
  * touch Soup or the GitHub API's JSON shapes.
  */
 
-import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
-import Soup from 'gi://Soup?version=3.0';
+import {makeRequest} from './src/utils/httpClient.js';
 
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -76,59 +74,34 @@ export function fileIssue(session, cancellable, repo, token, labels, title, body
         return;
     }
 
-    const msg = Soup.Message.new('POST', `https://api.github.com/repos/${repo}/issues`);
-    if (!msg) {
-        onError(_('“%s” is not a valid owner/name.').format(repo));
-        return;
-    }
-    msg.request_headers.append('Authorization', `Bearer ${token}`);
-    msg.request_headers.append('Accept', 'application/vnd.github+json');
-    // GitHub 403s a request with no User-Agent, which reads as a bad token
-    // rather than a missing header. Always send one.
-    msg.request_headers.append('User-Agent', AGENT_URL);
-
     const payload = JSON.stringify({
         title,
         body: `${body ? body + '\n\n' : ''}— filed from the GNOME Hive Monitor`,
         labels,
     });
-    msg.set_request_body_from_bytes(
-        'application/json',
-        new GLib.Bytes(new TextEncoder().encode(payload)));
-
-    session.send_and_read_async(
-        msg, GLib.PRIORITY_DEFAULT, cancellable, (session_, res) => {
-            let bytes;
-            try {
-                bytes = session_.send_and_read_finish(res);
-            } catch (e) {
-                if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                    console.error(`[HiveMonitor] Network error filing idea to GitHub: ${e.message ?? e}`);
-                    onError(_('Could not file the idea: %s').format(String(e.message ?? e)));
-                }
-                return;
-            }
-            const code = msg.get_status();
-            if (code === 201) {
-                let num = '';
-                let htmlUrl = null;
-                try {
-                    const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-                    num = j.number ? `#${j.number}` : '';
-                    if (j.html_url)
-                        htmlUrl = j.html_url;
-                } catch { /* the issue exists either way */ }
-                console.info(`[HiveMonitor] Successfully filed idea issue ${num} on repo ${repo}`);
-                onFiled(num, htmlUrl);
-                return;
-            }
-            let why = `HTTP ${code}`;
-            try {
-                const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-                if (j.message)
-                    why = j.message;
-            } catch { /* keep the status code */ }
-            console.error(`[HiveMonitor] GitHub API error filing idea on ${repo}: ${why}`);
-            onError(_('GitHub refused the idea: %s').format(why));
-        });
+    makeRequest(session, 'POST', `https://api.github.com/repos/${repo}/issues`, {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        // GitHub requires a User-Agent even when authentication is valid.
+        'User-Agent': AGENT_URL,
+    }, payload, {cancellable}).then(result => {
+        if (result.cancelled)
+            return;
+        if (result.status === 0) {
+            console.error(`[HiveMonitor] Network error filing idea to GitHub: ${result.error}`);
+            onError(_('Could not file the idea: %s').format(result.error));
+            return;
+        }
+        if (result.status === 201) {
+            // A malformed response does not undo the issue that was created.
+            const num = result.data?.number ? `#${result.data.number}` : '';
+            const htmlUrl = result.data?.html_url || null;
+            console.info(`[HiveMonitor] Successfully filed idea issue ${num} on repo ${repo}`);
+            onFiled(num, htmlUrl);
+            return;
+        }
+        const why = result.error || `HTTP ${result.status}`;
+        console.error(`[HiveMonitor] GitHub API error filing idea on ${repo}: ${why}`);
+        onError(_('GitHub refused the idea: %s').format(why));
+    });
 }

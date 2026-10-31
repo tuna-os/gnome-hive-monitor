@@ -87,7 +87,17 @@ python3 -m json.tool metadata.json > /dev/null
 Ensure the extension can be packed cleanly using `gnome-extensions pack`:
 
 ```bash
-gnome-extensions pack --force --extra-source=schemas/
+gnome-extensions pack --force --extra-source=schemas/ --extra-source=src/ \
+  --extra-source=hiveClient.js --extra-source=githubClient.js
+```
+
+### 4. Client Regression Tests
+
+Run the repository checks and the shared HTTP transport tests. The transport tests use Node.js with mocked Soup objects:
+
+```bash
+python3 -m unittest discover -s tests
+node tests/test_http_client.mjs
 ```
 
 ## Pull Request Guidelines
