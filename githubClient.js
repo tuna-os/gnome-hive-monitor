@@ -3,15 +3,15 @@
  * Split out of extension.js (tuna-os/gnome-hive-monitor#30): this is the
  * only place that knows about the GitHub issues REST endpoint, its auth
  * headers, and its request/response payload shape. HiveIndicator calls
- * fileIssue and reacts to whichever outcome it gets; it does not itself
- * touch Soup or the GitHub API's JSON shapes.
+ * fileIssue and reacts to whichever outcome it gets; it delegates transport
+ * and error handling to httpTransport.js (tuna-os/gnome-hive-monitor#68).
  */
 
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {sendRequest} from './httpTransport.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -96,39 +96,22 @@ export function fileIssue(session, cancellable, repo, token, labels, title, body
         'application/json',
         new GLib.Bytes(new TextEncoder().encode(payload)));
 
-    session.send_and_read_async(
-        msg, GLib.PRIORITY_DEFAULT, cancellable, (session_, res) => {
-            let bytes;
-            try {
-                bytes = session_.send_and_read_finish(res);
-            } catch (e) {
-                if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                    console.error(`[HiveMonitor] Network error filing idea to GitHub: ${e.message ?? e}`);
-                    onError(_('Could not file the idea: %s').format(String(e.message ?? e)));
-                }
-                return;
-            }
-            const code = msg.get_status();
-            if (code === 201) {
-                let num = '';
-                let htmlUrl = null;
-                try {
-                    const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-                    num = j.number ? `#${j.number}` : '';
-                    if (j.html_url)
-                        htmlUrl = j.html_url;
-                } catch { /* the issue exists either way */ }
-                console.info(`[HiveMonitor] Successfully filed idea issue ${num} on repo ${repo}`);
-                onFiled(num, htmlUrl);
-                return;
-            }
-            let why = `HTTP ${code}`;
-            try {
-                const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
-                if (j.message)
-                    why = j.message;
-            } catch { /* keep the status code */ }
+    sendRequest(session, msg, cancellable, {
+        expectedStatus: 201,
+        onSuccess: data => {
+            const num = data?.number ? `#${data.number}` : '';
+            const htmlUrl = data?.html_url ?? null;
+            console.info(`[HiveMonitor] Successfully filed idea issue ${num} on repo ${repo}`);
+            onFiled(num, htmlUrl);
+        },
+        onNetworkError: e => {
+            console.error(`[HiveMonitor] Network error filing idea to GitHub: ${e.message ?? e}`);
+            onError(_('Could not file the idea: %s').format(String(e.message ?? e)));
+        },
+        onHttpError: (code, {data}) => {
+            const why = data?.message || `HTTP ${code}`;
             console.error(`[HiveMonitor] GitHub API error filing idea on ${repo}: ${why}`);
             onError(_('GitHub refused the idea: %s').format(why));
-        });
+        },
+    });
 }
