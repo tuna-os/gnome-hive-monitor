@@ -18,7 +18,7 @@ body:
     id: logs
     attributes:
       label: Relevant Logs (`journalctl`)
-      description: Paste relevant `[GNOME Hive Monitor]` logs from `journalctl`.
+      description: Paste relevant `[HiveMonitor]` logs from `journalctl`.
     validations:
       required: false
   - type: textarea

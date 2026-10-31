@@ -9,13 +9,13 @@ This runbook covers operational troubleshooting, diagnostic log inspection, and 
 ### 1. Inspect GNOME Shell Logs
 To filter extension diagnostic logs from systemd journald:
 ```bash
-journalctl --user -f -o cat | grep "\[GNOME Hive Monitor\]"
+journalctl --user -f -o cat | grep -F '[HiveMonitor]'
 ```
 
 Common log entries and actions:
-- `[GNOME Hive Monitor] HTTP Error: ...` -> Check local network connectivity or Hive backend API health.
-- `[GNOME Hive Monitor] Token rejected (HTTP 401/403)` -> Verify user GitHub Personal Access Token configured in Extension Preferences (`prefs.js`).
-- `[GNOME Hive Monitor] JSON Parse Error: ...` -> Verify backend API response format.
+- `[HiveMonitor] HTTP error from hive (HTTP 503)` -> Check local network connectivity or Hive backend API health.
+- `[HiveMonitor] Authentication rejected by hive (HTTP 401)` -> Verify user GitHub Personal Access Token configured in Extension Preferences (`prefs.js`).
+- `[HiveMonitor] Failed to parse hive JSON response: ...` -> Verify backend API response format.
 
 ### 2. Verify Extension State
 Check extension enablement state via `gsettings`:

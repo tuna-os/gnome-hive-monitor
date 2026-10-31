@@ -13,6 +13,6 @@ Per operations policy:
 
 ## Operational Guidelines & Diagnostic Logging
 
-1. **Client Diagnostics**: Structured console logs must include the `[GNOME Hive Monitor]` prefix for auditability.
+1. **Client Diagnostics**: Structured console logs must include the `[HiveMonitor]` prefix for auditability.
 2. **Error Logging**: Network timeouts, HTTP 4xx/5xx responses, JSON parsing failures, and API issue submission errors should be captured in `journalctl`.
 3. **Future Exporter Integration**: If an operator-managed telemetry collector or backend is designated in the future, client metrics (poll latency, HTTP status code counters, UI error rates) should be forwarded via a local loopback listener without introducing third-party SaaS dependencies.
