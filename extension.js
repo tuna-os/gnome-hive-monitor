@@ -155,6 +155,13 @@ class HiveIndicator extends PanelMenu.Button {
         // effect immediately, not after the next poll interval.
         this._settingsId = this._settings.connect('changed', () => {
             this._abortStatus();
+            // Do not show the previous endpoint's state while the new one
+            // is in flight.
+            this._label.set_text('…');
+            this._icon.icon_name = 'system-run-symbolic';
+            this._statusItem.label.set_text(_('Refreshing hive status…'));
+            this._detailItem.label.set_text('');
+            this._capacityItem.label.set_text('');
             this._restartTimer();
             this._refresh();
         });
@@ -175,6 +182,12 @@ class HiveIndicator extends PanelMenu.Button {
             style_class: 'popup-inactive-menu-item',
         });
         this.menu.addMenuItem(this._detailItem);
+
+        this._capacityItem = new PopupMenu.PopupMenuItem('', {
+            reactive: false,
+            style_class: 'popup-inactive-menu-item',
+        });
+        this.menu.addMenuItem(this._capacityItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -227,6 +240,9 @@ class HiveIndicator extends PanelMenu.Button {
      * fetched with the current pair. Deliberately leaves the idea POST
      * running. */
     _abortStatus() {
+        // Invalidate even when the new settings are incomplete and no new
+        // request will be sent. A cancelled reply may still arrive.
+        this._statusGen++;
         this._statusCancel.cancel();
         this._statusCancel = new Gio.Cancellable();
     }
@@ -248,6 +264,7 @@ class HiveIndicator extends PanelMenu.Button {
         this._icon.icon_name = 'dialog-question-symbolic';
         this._statusItem.label.set_text(msg);
         this._detailItem.label.set_text(_('Open Settings to configure.'));
+        this._capacityItem.label.set_text('');
     }
 
     _refresh() {
@@ -293,6 +310,7 @@ class HiveIndicator extends PanelMenu.Button {
         this._label.set_text(_('hive!'));
         this._statusItem.label.set_text(short);
         this._detailItem.label.set_text(detail || '');
+        this._capacityItem.label.set_text('');
     }
 
     _render(d) {
@@ -307,9 +325,28 @@ class HiveIndicator extends PanelMenu.Button {
                 ? `${mode} ${issues}/${prs}`
                 : mode);
 
-        // A paused agent is the quiet failure this widget exists to surface:
-        // the hive looks alive while some of its lanes do nothing.
-        this._icon.icon_name = paused > 0
+        // Only display fixed, translated strings. Never echo server-provided
+        // capacity text, which could include account or provider details.
+        let capacity;
+        switch (d.capacity_state) {
+        case 'queue_limited':
+            capacity = _('Queued work is capacity limited');
+            break;
+        case 'available':
+            capacity = _('Capacity available');
+            break;
+        case 'stale':
+            capacity = _('Capacity status is stale');
+            break;
+        default:
+            capacity = _('Capacity status is unknown');
+            break;
+        }
+        this._capacityItem.label.set_text(capacity);
+
+        // Keep the existing paused warning, and surface a confirmed queue
+        // limitation in the panel too. Unknown is not evidence of a limit.
+        this._icon.icon_name = paused > 0 || d.capacity_state === 'queue_limited'
             ? 'dialog-warning-symbolic'
             : 'system-run-symbolic';
 
@@ -376,6 +413,7 @@ class HiveIndicator extends PanelMenu.Button {
         }
         // Cancel in-flight requests, then drop the session: a reply arriving
         // after destroy() would touch freed actors.
+        this._statusGen++;
         this._statusCancel.cancel();
         this._ideaCancel.cancel();
         this._session?.abort();

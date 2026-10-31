@@ -36,6 +36,35 @@ exists to catch: a hive with paused lanes looks completely healthy from the
 outside while part of it does nothing. The governor still computes those agents
 as due and then silently skips them.
 
+The menu also shows a capacity state. Current Hive servers do not supply it,
+so it is **unknown**; unknown is not the same as idle or unreachable. A
+confirmed queue limitation uses the warning icon. The menu shows when data
+is stale. Authentication errors remain separate from network errors.
+
+### Proposed capacity contract
+
+This is a client-side proposal, not yet a Hive protocol guarantee. The monitor
+accepts an optional `capacity_state` field on `/api/widget`, using only these
+fixed values:
+
+| Value | Meaning |
+|---|---|
+| `queue_limited` | Queued work cannot be dispatched because of a confirmed capacity limit. |
+| `available` | A fresh evaluation found no capacity limit blocking queued work; it does not imply an empty queue. |
+| `stale` | The capacity evaluation is no longer fresh. |
+| `unknown` | The capacity state cannot be determined. |
+
+A missing, invalid, or unrecognized value is unknown. The monitor does not
+infer a limit from queue depth. It does not display text from the server.
+Hive must opt in to supply this aggregate and set a freshness limit. Hive must
+return stale or unknown for a failed or old probe, not a limit.
+
+The aggregate itself can reveal fleet activity. Hive must not expose it by
+default without an explicit decision from its maintainers. It must never
+contain provider names, account identifiers, subscription figures, or
+credentials. The monitor does not call the owner-only provider-headroom
+endpoint. Existing servers show unknown until Hive adopts this contract.
+
 ## Filing an idea
 
 *New Idea…* opens a small dialog and creates a **GitHub issue** on a repository

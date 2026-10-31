@@ -66,6 +66,15 @@ journalctl -f -o cat /usr/bin/gnome-shell
 
 Before you send a pull request, run these validation checks:
 
+### Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+node --test tests/test_widget.cjs
+```
+
+The Node tests use Shell and Soup doubles. They do not replace a live Shell test.
+
 ### 1. Schema Compilation Verification
 
 Verify that GSettings schema XML is syntactically valid and compiles cleanly with `--strict`:
