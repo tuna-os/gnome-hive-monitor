@@ -66,6 +66,13 @@ journalctl -f -o cat /usr/bin/gnome-shell
 
 Before you send a pull request, run these validation checks:
 
+The status tests need Node.js. They run the JavaScript modules with mock GNOME
+APIs, without a Shell session:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 ### 1. Schema Compilation Verification
 
 Verify that GSettings schema XML is syntactically valid and compiles cleanly with `--strict`:
@@ -87,7 +94,9 @@ python3 -m json.tool metadata.json > /dev/null
 Ensure the extension can be packed cleanly using `gnome-extensions pack`:
 
 ```bash
-gnome-extensions pack --force --extra-source=schemas/
+gnome-extensions pack --force --extra-source=schemas/ \
+  --extra-source=hiveClient.js --extra-source=githubClient.js \
+  --extra-source=statusPoller.js --extra-source=statusRenderer.js
 ```
 
 ## Pull Request Guidelines

@@ -17,7 +17,6 @@
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Soup from 'gi://Soup?version=3.0';
 import St from 'gi://St';
@@ -32,7 +31,8 @@ import {
     gettext as _,
 } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {fetchWidgetStatus} from './hiveClient.js';
+import {StatusPoller} from './statusPoller.js';
+import {renderStatus} from './statusRenderer.js';
 import {fileIssue} from './githubClient.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
@@ -120,20 +120,9 @@ class HiveIndicator extends PanelMenu.Button {
         this._ext = ext;
         this._settings = ext.getSettings();
         this._session = newSession();
-        // One cancellable per concern, not one for the extension. A settings
-        // change has to abort the in-flight status poll, and must NOT abort
-        // an idea POST the user already confirmed: that request targets
-        // GitHub, which a hive-url/hive-token edit says nothing about. A
-        // single shared cancellable cannot express that difference.
-        this._statusCancel = new Gio.Cancellable();
         this._ideaCancel = new Gio.Cancellable();
-        this._timer = null;
-        // Bumped on every status request; a reply carrying a stale generation
-        // is dropped rather than rendered. Cancelling is not sufficient on its
-        // own: Soup can still deliver a reply that was already in flight when
-        // its cancellable was cancelled, and two overlapping polls can
-        // complete out of order.
-        this._statusGen = 0;
+        this._poller = new StatusPoller(this._settings, this._session,
+            state => this._applyDisplay(renderStatus(state, _)));
 
         const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
         this._icon = new St.Icon({
@@ -151,16 +140,7 @@ class HiveIndicator extends PanelMenu.Button {
 
         this._buildMenu();
 
-        // Re-read on any settings change: a corrected URL or token should take
-        // effect immediately, not after the next poll interval.
-        this._settingsId = this._settings.connect('changed', () => {
-            this._abortStatus();
-            this._restartTimer();
-            this._refresh();
-        });
-
-        this._restartTimer();
-        this._refresh();
+        this._poller.start();
     }
 
     _buildMenu() {
@@ -184,14 +164,14 @@ class HiveIndicator extends PanelMenu.Button {
 
         const open = new PopupMenu.PopupMenuItem(_('Open Dashboard'));
         open.connect('activate', () => {
-            const url = this._url();
+            const url = this._poller.url;
             if (url)
                 Gio.AppInfo.launch_default_for_uri(url, null);
         });
         this.menu.addMenuItem(open);
 
         const refresh = new PopupMenu.PopupMenuItem(_('Refresh Now'));
-        refresh.connect('activate', () => this._refresh());
+        refresh.connect('activate', () => this._poller.refresh());
         this.menu.addMenuItem(refresh);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -200,141 +180,11 @@ class HiveIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(prefs);
     }
 
-    _url() {
-        const raw = this._settings.get_string('hive-url').trim();
-        if (!raw)
-            return '';
-
-        // GJS has no WHATWG URL global; GLib.Uri is the available parser.
-        let parsed;
-        try {
-            parsed = GLib.Uri.parse(raw, GLib.UriFlags.NONE);
-        } catch {
-            return '';
-        }
-
-        // The token is sent on every poll, so never over cleartext or with
-        // credentials embedded in the URL.
-        if (parsed.get_scheme()?.toLowerCase() !== 'https' ||
-            !parsed.get_host() || parsed.get_userinfo())
-            return '';
-
-        return parsed.to_string().replace(/\/+$/, '');
-    }
-
-    /* Abort the in-flight status poll and invalidate its reply, so a status
-     * fetched with the previous URL or token can never render over one
-     * fetched with the current pair. Deliberately leaves the idea POST
-     * running. */
-    _abortStatus() {
-        this._statusCancel.cancel();
-        this._statusCancel = new Gio.Cancellable();
-    }
-
-    _restartTimer() {
-        if (this._timer) {
-            GLib.Source.remove(this._timer);
-            this._timer = null;
-        }
-        const secs = this._settings.get_int('poll-seconds');
-        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, secs, () => {
-            this._refresh();
-            return GLib.SOURCE_CONTINUE;
-        });
-    }
-
-    _setUnconfigured(msg) {
-        this._label.set_text(_('hive?'));
-        this._icon.icon_name = 'dialog-question-symbolic';
-        this._statusItem.label.set_text(msg);
-        this._detailItem.label.set_text(_('Open Settings to configure.'));
-    }
-
-    _refresh() {
-        const url = this._url();
-        const token = this._settings.get_string('hive-token').trim();
-        if (!url) {
-            this._setUnconfigured(_('No hive URL set.'));
-            return;
-        }
-        if (!token) {
-            this._setUnconfigured(_('No hive token set.'));
-            return;
-        }
-
-        // Claim this generation before sending. Every outcome below is gated
-        // on still owning it, so the newest request is the only one that can
-        // touch the panel, whichever order the replies arrive in.
-        const gen = ++this._statusGen;
-        const current = () => gen === this._statusGen;
-
-        fetchWidgetStatus(this._session, this._statusCancel, url, token, {
-            onSuccess: data => {
-                if (current())
-                    this._render(data);
-            },
-            onInvalidUrl: message => {
-                if (current())
-                    this._setUnconfigured(message);
-            },
-            onError: (short, detail) => {
-                if (current())
-                    this._showError(short, detail);
-            },
-            onAuthError: (short, detail) => {
-                if (current())
-                    this._showError(short, detail);
-            },
-        });
-    }
-
-    _showError(short, detail) {
-        this._icon.icon_name = 'dialog-warning-symbolic';
-        this._label.set_text(_('hive!'));
-        this._statusItem.label.set_text(short);
-        this._detailItem.label.set_text(detail || '');
-    }
-
-    _render(d) {
-        const mode = String(d.mode ?? '?').toUpperCase();
-        const issues = Number(d.issues ?? 0);
-        const prs = Number(d.prs ?? 0);
-        const running = Number(d.running ?? 0);
-        const paused = Number(d.paused ?? 0);
-
-        this._label.set_text(
-            this._settings.get_boolean('show-counts')
-                ? `${mode} ${issues}/${prs}`
-                : mode);
-
-        // A paused agent is the quiet failure this widget exists to surface:
-        // the hive looks alive while some of its lanes do nothing.
-        this._icon.icon_name = paused > 0
-            ? 'dialog-warning-symbolic'
-            : 'system-run-symbolic';
-
-        this._statusItem.label.set_text(
-            _('%s — %d issues, %d PRs').format(mode, issues, prs));
-
-        const agents = paused > 0
-            ? _('%d agents running, %d paused').format(running, paused)
-            : _('%d agents running').format(running);
-        this._detailItem.label.set_text(
-            d.last_eval
-                ? `${agents} · ${_('last eval %s').format(this._ago(d.last_eval))}`
-                : agents);
-    }
-
-    _ago(iso) {
-        const then = Date.parse(iso);
-        if (Number.isNaN(then))
-            return iso;
-        const s = Math.max(0, Math.round((Date.now() - then) / 1000));
-        if (s < 60)
-            return _('%ds ago').format(s);
-        if (s < 3600)
-            return _('%dm ago').format(Math.round(s / 60));
-        return _('%dh ago').format(Math.round(s / 3600));
+    _applyDisplay(display) {
+        this._label.set_text(display.label);
+        this._icon.icon_name = display.icon;
+        this._statusItem.label.set_text(display.status);
+        this._detailItem.label.set_text(display.detail);
     }
 
     _openIdeaDialog() {
@@ -359,24 +209,14 @@ class HiveIndicator extends PanelMenu.Button {
                     _('Filed %s on %s.').format(num, repo));
                 // Ideas change the queue depth, so reflect it immediately
                 // instead of waiting out the poll interval.
-                this._refresh();
+                this._poller.refresh();
             },
             onError: message => Main.notify(_('Hive Monitor'), message),
         });
     }
 
     destroy() {
-        if (this._timer) {
-            GLib.Source.remove(this._timer);
-            this._timer = null;
-        }
-        if (this._settingsId) {
-            this._settings.disconnect(this._settingsId);
-            this._settingsId = null;
-        }
-        // Cancel in-flight requests, then drop the session: a reply arriving
-        // after destroy() would touch freed actors.
-        this._statusCancel.cancel();
+        this._poller.destroy();
         this._ideaCancel.cancel();
         this._session?.abort();
         this._session = null;
