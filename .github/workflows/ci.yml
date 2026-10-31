@@ -40,6 +40,11 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+
       - name: Install GSettings schema compiler
         run: |
           sudo apt-get update
@@ -47,6 +52,9 @@ jobs:
 
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
+
+      - name: Run JavaScript behavior tests
+        run: node --experimental-vm-modules --test tests/behavior.cjs
 
       - name: Validate metadata.json
         run: python3 -m json.tool metadata.json > /dev/null
