@@ -34,6 +34,7 @@ import {
 
 import {fetchWidgetStatus} from './hiveClient.js';
 import {fileIssue} from './githubClient.js';
+import {validateIdea} from './ideaValidation.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -101,14 +102,12 @@ class IdeaDialog extends ModalDialog.ModalDialog {
         this.setInitialKeyFocus(this._title.clutter_text);
     }
 
+    setErrors(errors) {
+        this._status.set_text(errors.join('\n'));
+    }
+
     _submit() {
-        const title = this._title.get_text().trim();
-        if (!title) {
-            this._status.set_text(_('A title is required.'));
-            return;
-        }
-        this.close();
-        this._onSubmit(title, this._body.get_text().trim());
+        this._onSubmit(this._title.get_text(), this._body.get_text());
     }
 });
 
@@ -346,7 +345,20 @@ class HiveIndicator extends PanelMenu.Button {
             this._ext.openPreferences();
             return;
         }
-        new IdeaDialog((title, body) => this._fileIdea(repo, tok, title, body)).open();
+        const dialog = new IdeaDialog((title, body) => {
+            const {valid, errors} = validateIdea(title, body);
+            if (!valid) {
+                dialog.setErrors(errors.map(error => {
+                    if (error === 'title-required')
+                        return _('A title is required.');
+                    return error;
+                }));
+                return;
+            }
+            dialog.close();
+            this._fileIdea(repo, tok, title.trim(), body.trim());
+        });
+        dialog.open();
     }
 
     _fileIdea(repo, token, title, body) {
