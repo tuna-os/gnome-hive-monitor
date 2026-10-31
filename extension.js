@@ -34,6 +34,7 @@ import {
 
 import {fetchWidgetStatus} from './hiveClient.js';
 import {fileIssue} from './githubClient.js';
+import {IdeaDialogState, validateIdea} from './dialogState.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -52,6 +53,7 @@ class IdeaDialog extends ModalDialog.ModalDialog {
     _init(onSubmit) {
         super._init({styleClass: 'hive-idea-dialog'});
         this._onSubmit = onSubmit;
+        this._state = new IdeaDialogState(_);
 
         const box = new St.BoxLayout({
             vertical: true,
@@ -86,7 +88,7 @@ class IdeaDialog extends ModalDialog.ModalDialog {
         this._status = new St.Label({text: '', style: 'color: #f66;'});
         box.add_child(this._status);
 
-        this.setButtons([
+        const buttons = this.setButtons([
             {
                 label: _('Cancel'),
                 action: () => this.close(),
@@ -98,17 +100,71 @@ class IdeaDialog extends ModalDialog.ModalDialog {
                 default: true,
             },
         ]);
+        this._submitButton = Array.isArray(buttons) ? buttons[1] : null;
         this.setInitialKeyFocus(this._title.clutter_text);
     }
 
+    _setSubmitReactive(reactive) {
+        if (!this._submitButton)
+            return;
+        if (typeof this._submitButton.set_reactive === 'function')
+            this._submitButton.set_reactive(reactive);
+        else
+            this._submitButton.reactive = reactive;
+    }
+
+    _applyState() {
+        switch (this._state.state) {
+        case 'input':
+            this._status.set_text('');
+            this._setSubmitReactive(true);
+            break;
+        case 'filing':
+            this._status.set_text(_('Filing…'));
+            this._setSubmitReactive(false);
+            break;
+        case 'error':
+            this._status.set_text(this._state.errorMsg);
+            this._setSubmitReactive(true);
+            break;
+        case 'filed':
+            this._status.set_text('');
+            this.close();
+            break;
+        }
+    }
+
     _submit() {
-        const title = this._title.get_text().trim();
-        if (!title) {
-            this._status.set_text(_('A title is required.'));
+        const title = this._title.get_text();
+        const body = this._body.get_text();
+
+        if (!this._state.submit(title, body)) {
+            this._applyState();
             return;
         }
-        this.close();
-        this._onSubmit(title, this._body.get_text().trim());
+        this._applyState();
+
+        try {
+            const res = this._onSubmit(title.trim(), body.trim());
+            if (res && typeof res.then === 'function') {
+                res.then(
+                    () => {
+                        this._state.success();
+                        this._applyState();
+                    },
+                    err => {
+                        this._state.error(err?.message ?? String(err));
+                        this._applyState();
+                    }
+                );
+            } else {
+                this._state.success();
+                this._applyState();
+            }
+        } catch (err) {
+            this._state.error(err?.message ?? String(err));
+            this._applyState();
+        }
     }
 });
 
@@ -395,3 +451,5 @@ export default class HiveMonitorExtension extends Extension {
         this._indicator = null;
     }
 }
+
+export {IdeaDialog, IdeaDialogState, validateIdea};
