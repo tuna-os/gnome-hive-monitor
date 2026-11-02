@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -286,10 +287,96 @@ class TestExtensionLogic(unittest.TestCase):
         self.assertEqual(format_ago(86400), "24h ago")
 
     def test_source_files_exist_and_nonempty(self):
-        for filename in ["extension.js", "prefs.js", "README.md", "CONTRIBUTING.md"]:
+        for filename in ["extension.js", "dialogState.js", "prefs.js", "README.md", "CONTRIBUTING.md"]:
             path = REPO_ROOT / filename
             self.assertTrue(path.exists(), f"File {filename} must exist")
             self.assertGreater(path.stat().st_size, 0, f"File {filename} must not be empty")
+
+
+class TestIdeaDialogState(unittest.TestCase):
+    """IdeaDialogState decouples dialog state, validation, and async lifecycle.
+
+    Replicate and verify state transitions and validation rules, as well as
+    executing the actual dialogState.js module in Node.js."""
+
+    def setUp(self):
+        self.dialog_state_path = REPO_ROOT / "dialogState.js"
+        self.assertTrue(self.dialog_state_path.exists(), "dialogState.js must exist")
+        self.extension_source = (REPO_ROOT / "extension.js").read_text(encoding="utf-8")
+
+    def test_dialog_state_file_syntax(self):
+        proc = subprocess.run(["node", "--check", str(self.dialog_state_path)],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"dialogState.js syntax check failed: {proc.stderr}")
+
+    def test_extension_imports_dialog_state(self):
+        self.assertIn("import {IdeaDialogState, validateIdea} from './dialogState.js';",
+                      self.extension_source)
+        self.assertIn("this._state = new IdeaDialogState(_);", self.extension_source)
+        self.assertIn("_applyState()", self.extension_source)
+        self.assertIn("this._state.submit(", self.extension_source)
+
+    def test_dialog_reacts_to_four_state_machine_phases(self):
+        """IdeaDialog reacts to state changes:
+        'input' -> normal form
+        'filing' -> disable submit, show filing status
+        'error' -> show error, keep form
+        'filed' -> show success, close"""
+        apply_fn = self.extension_source[self.extension_source.index("    _applyState() {"):]
+        apply_fn = apply_fn[:apply_fn.index("\n    }")]
+        for state in ("'input'", "'filing'", "'error'", "'filed'"):
+            self.assertIn(state, apply_fn, f"_applyState must handle {state}")
+        self.assertIn("this.close()", apply_fn)
+
+    def test_node_unit_suite_for_dialog_state(self):
+        js_test = """
+import {IdeaDialogState, validateIdea} from './dialogState.js';
+import assert from 'node:assert';
+
+// 1. Validation logic
+assert.strictEqual(validateIdea('', '').valid, false);
+assert.strictEqual(validateIdea('   ', 'detail').valid, false);
+assert.strictEqual(validateIdea(null, 'detail').valid, false);
+assert.strictEqual(validateIdea(undefined, 'detail').valid, false);
+assert.strictEqual(validateIdea('', '', s => `[i18n] ${s}`).error, '[i18n] A title is required.');
+
+const ok = validateIdea('  Clean Title  ', '  Optional Body  ');
+assert.strictEqual(ok.valid, true);
+assert.strictEqual(ok.title, 'Clean Title');
+assert.strictEqual(ok.body, 'Optional Body');
+
+// 2. State machine transitions
+const sm = new IdeaDialogState();
+assert.strictEqual(sm.state, 'input');
+assert.strictEqual(sm.errorMsg, '');
+
+// Zero-arg submit (issue recommendation contract)
+sm.submit();
+assert.strictEqual(sm.state, 'filing');
+
+sm.success();
+assert.strictEqual(sm.state, 'filed');
+
+sm.error('Network unreachable');
+assert.strictEqual(sm.state, 'error');
+assert.strictEqual(sm.errorMsg, 'Network unreachable');
+
+sm.reset();
+assert.strictEqual(sm.state, 'input');
+assert.strictEqual(sm.errorMsg, '');
+
+// Validated submit
+assert.strictEqual(sm.submit('', 'body'), false);
+assert.strictEqual(sm.state, 'error');
+assert.strictEqual(sm.errorMsg, 'A title is required.');
+
+assert.strictEqual(sm.submit('Valid Title', 'body'), true);
+assert.strictEqual(sm.state, 'filing');
+assert.strictEqual(sm.errorMsg, '');
+"""
+        proc = subprocess.run(["node", "--input-type=module", "-e", js_test],
+                              cwd=REPO_ROOT, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Node unit suite failed: {proc.stderr}")
 
 
 if __name__ == "__main__":
