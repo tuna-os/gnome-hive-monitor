@@ -9,6 +9,7 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
+import {loadToken, saveToken} from './credentials.js';
 
 import {
     ExtensionPreferences,
@@ -39,8 +40,7 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         conn.add(url);
 
         const token = new Adw.PasswordEntryRow({title: _('Hive Token')});
-        token.set_text(settings.get_string('hive-token'));
-        token.connect('changed', () => settings.set_string('hive-token', token.get_text()));
+        this._credentialRow(token, settings, 'hive');
         conn.add(token);
 
         const hint = new Adw.ActionRow({
@@ -86,8 +86,7 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         ideas.add(repo);
 
         const ghTok = new Adw.PasswordEntryRow({title: _('GitHub Token')});
-        ghTok.set_text(settings.get_string('github-token'));
-        ghTok.connect('changed', () => settings.set_string('github-token', ghTok.get_text()));
+        this._credentialRow(ghTok, settings, 'github');
         ideas.add(ghTok);
 
         const labels = new Adw.EntryRow({title: _('Labels')});
@@ -103,4 +102,30 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         labelHint.add_css_class('dim-label');
         ideas.add(labelHint);
     }
+
+    _credentialRow(row, settings, type) {
+        const save = new Gtk.Button({label: _('Save'), valign: Gtk.Align.CENTER});
+        row.add_suffix(save);
+        row.sensitive = false;
+        loadToken(settings, type).then(value => {
+            row.set_text(value);
+            row.sensitive = true;
+        }).catch(() => {
+            row.sensitive = true;
+            row.title = _('Keyring unavailable — enter a token and retry Save');
+        });
+        save.connect('clicked', async () => {
+            row.sensitive = false;
+            try {
+                await saveToken(settings, type, row.get_text().trim());
+                save.label = _('Saved');
+            } catch {
+                save.label = _('Retry Save');
+                row.title = _('Could not save token to keyring');
+            } finally {
+                row.sensitive = true;
+            }
+        });
+    }
+
 }
