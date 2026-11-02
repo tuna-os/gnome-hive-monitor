@@ -7,11 +7,11 @@
  * touch Soup or the GitHub API's JSON shapes.
  */
 
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {HttpError, handleSoupFinish, parseJson} from './httpUtils.js';
 
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
 
@@ -100,20 +100,21 @@ export function fileIssue(session, cancellable, repo, token, labels, title, body
         msg, GLib.PRIORITY_DEFAULT, cancellable, (session_, res) => {
             let bytes;
             try {
-                bytes = session_.send_and_read_finish(res);
-            } catch (e) {
-                if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                    console.error(`[HiveMonitor] Network error filing idea to GitHub: ${e.message ?? e}`);
-                    onError(_('Could not file the idea: %s').format(String(e.message ?? e)));
-                }
+                bytes = handleSoupFinish(session_, res);
+            } catch (err) {
+                if (err instanceof HttpError && err.type === 'cancelled')
+                    return; // Silently ignore cancellation.
+                console.error(`[HiveMonitor] Network error filing idea to GitHub: ${err.detail || err.message}`);
+                onError(_('Could not file the idea: %s').format(err.message));
                 return;
             }
+
             const code = msg.get_status();
             if (code === 201) {
                 let num = '';
                 let htmlUrl = null;
                 try {
-                    const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+                    const j = parseJson(bytes);
                     num = j.number ? `#${j.number}` : '';
                     if (j.html_url)
                         htmlUrl = j.html_url;
@@ -122,9 +123,10 @@ export function fileIssue(session, cancellable, repo, token, labels, title, body
                 onFiled(num, htmlUrl);
                 return;
             }
+
             let why = `HTTP ${code}`;
             try {
-                const j = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+                const j = parseJson(bytes);
                 if (j.message)
                     why = j.message;
             } catch { /* keep the status code */ }
