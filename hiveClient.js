@@ -7,9 +7,7 @@
  * whichever outcome it gets; it does not itself touch Soup.
  */
 
-import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
-import Soup from 'gi://Soup?version=3.0';
+import {isAuthError, makeRequest} from './src/utils/httpClient.js';
 
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -43,49 +41,40 @@ export function fetchWidgetStatus(session, cancellable, url, token, {onSuccess, 
         onInvalidUrl(_('Hive URL must use HTTPS (https://...), not HTTP.'));
         return;
     }
-    
-    const msg = Soup.Message.new('GET', `${url}/api/widget`);
-    if (!msg) {
-        onInvalidUrl(_('That hive URL is not valid.'));
-        return;
-    }
-    msg.request_headers.append('X-Hive-Internal', token);
 
-    session.send_and_read_async(
-        msg, GLib.PRIORITY_DEFAULT, cancellable, (session_, res) => {
-            let bytes;
-            try {
-                bytes = session_.send_and_read_finish(res);
-            } catch (e) {
-                if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
-                    console.error(`[HiveMonitor] Network error fetching widget status: ${e.message ?? e}`);
-                    onError(_('Cannot reach the hive.'), String(e.message ?? e));
-                }
-                return;
-            }
-            const code = msg.get_status();
-            if (code === 401 || code === 403) {
-                // Distinguished on purpose: "unreachable" and "your token is
-                // wrong" need different fixes, and a single generic error
-                // sends people to debug the network for an auth problem.
-                console.error(`[HiveMonitor] Authentication rejected by hive (HTTP ${code})`);
-                onAuthError(_('Hive rejected the token.'),
-                    _('Check the hive token in Settings (HTTP %d).').format(code));
-                return;
-            }
-            if (code !== 200) {
-                console.error(`[HiveMonitor] HTTP error from hive (HTTP ${code})`);
-                onError(_('Hive returned HTTP %d.').format(code), '');
-                return;
-            }
-            try {
-                const txt = new TextDecoder().decode(bytes.get_data());
-                const data = JSON.parse(txt);
-                console.debug(`[HiveMonitor] Successfully updated status (mode: ${data.mode ?? 'unknown'}, issues: ${data.issues ?? 0}, prs: ${data.prs ?? 0})`);
-                onSuccess(data);
-            } catch (e) {
-                console.error(`[HiveMonitor] Failed to parse hive JSON response: ${e.message ?? e}`);
-                onError(_('Unreadable response.'), String(e.message ?? e));
-            }
-        });
+    makeRequest(session, 'GET', `${url}/api/widget`, {
+        'X-Hive-Internal': token,
+    }, null, {cancellable}).then(result => {
+        if (result.cancelled)
+            return;
+        if (result.invalidUrl) {
+            onInvalidUrl(_('That hive URL is not valid.'));
+            return;
+        }
+        if (result.status === 0) {
+            console.error(`[HiveMonitor] Network error fetching widget status: ${result.error}`);
+            onError(_('Cannot reach the hive.'), result.error);
+            return;
+        }
+        const code = result.status;
+        if (isAuthError(code)) {
+            console.error(`[HiveMonitor] Authentication rejected by hive (HTTP ${code})`);
+            onAuthError(_('Hive rejected the token.'),
+                _('Check the hive token in Settings (HTTP %d).').format(code));
+            return;
+        }
+        if (code !== 200) {
+            console.error(`[HiveMonitor] HTTP error from hive (HTTP ${code})`);
+            onError(_('Hive returned HTTP %d.').format(code), '');
+            return;
+        }
+        if (result.parseError) {
+            console.error(`[HiveMonitor] Failed to parse hive JSON response: ${result.parseError}`);
+            onError(_('Unreadable response.'), result.parseError);
+            return;
+        }
+        const data = result.data;
+        console.debug(`[HiveMonitor] Successfully updated status (mode: ${data?.mode ?? 'unknown'}, issues: ${data?.issues ?? 0}, prs: ${data?.prs ?? 0})`);
+        onSuccess(data);
+    });
 }
