@@ -74,10 +74,10 @@ function load() {
     // unchanged. This catches rendering and lifecycle regressions, not Shell ABI issues.
     const source = name => fs.readFileSync(path.join(root, name), 'utf8')
         .replace(/import\s+(?:\{[^}]*\}|[^;]+?)\s+from\s+['"][^'"]+['"];\s*/gs, '')
-        .replace(/export default class /g, 'class ').replace(/export function /g, 'function ');
+        .replace(/export (?:default )?class /g, 'class ').replace(/export function /g, 'function ');
     vm.runInContext(`String.prototype.format = function (...args) {
         let i = 0; return this.replace(/%[sd]/g, () => String(args[i++]));
-    };\n${source('hiveClient.js')}\n${source('extension.js')}\nglobalThis.Indicator = HiveIndicator;`, ctx);
+    };\n${source('hiveClient.js')}\n${source('statusPoller.js')}\n${source('statusRenderer.js')}\n${source('extension.js')}\nglobalThis.Indicator = HiveIndicator;`, ctx);
     const indicator = new ctx.Indicator({getSettings: () => settings});
     function reply(req, status, body) {
         req.msg.status = status;
@@ -103,12 +103,12 @@ test('widget renders only bounded capacity states and keeps legacy responses', (
         ['provider secret', 'Capacity status is unknown', 'system-run-symbolic'],
         [{account: 'secret'}, 'Capacity status is unknown', 'system-run-symbolic'],
     ]) {
-        h.indicator._refresh();
+        h.indicator._poller.refresh();
         h.reply(h.requests.at(-1), 200, {...base, capacity_state: state});
         assert.equal(h.indicator._capacityItem.label.text, expected);
         assert.equal(h.indicator._icon.icon_name, icon);
     }
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     h.reply(h.requests.at(-1), 200, {...base, paused: 1, capacity_state: 'available'});
     assert.equal(h.indicator._icon.icon_name, 'dialog-warning-symbolic');
 });
@@ -116,18 +116,18 @@ test('widget renders only bounded capacity states and keeps legacy responses', (
 test('authentication and network errors clear any previous capacity', () => {
     const h = load();
     h.reply(h.requests[0], 200, {...base, capacity_state: 'queue_limited'});
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     h.reply(h.requests.at(-1), 403, '');
     assert.equal(h.indicator._statusItem.label.text, 'Hive rejected the token.');
     assert.equal(h.indicator._capacityItem.label.text, '');
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     h.reply(h.requests.at(-1), 500, '');
     assert.equal(h.indicator._statusItem.label.text, 'Hive returned HTTP 500.');
     assert.equal(h.indicator._capacityItem.label.text, '');
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     h.reply(h.requests.at(-1), 200, 'not json');
     assert.equal(h.indicator._statusItem.label.text, 'Unreadable response.');
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     const network = h.requests.at(-1);
     network.callback(network.session, {error: new Error('offline')});
     assert.equal(h.indicator._statusItem.label.text, 'Cannot reach the hive.');
@@ -136,7 +136,7 @@ test('authentication and network errors clear any previous capacity', () => {
 test('endpoint changes, incomplete settings and disable reject late replies', () => {
     const h = load();
     h.reply(h.requests[0], 200, {...base, capacity_state: 'queue_limited'});
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     const old = h.requests.at(-1);
     h.settings.values['hive-url'] = 'https://other.example';
     h.settings.changed();
@@ -148,7 +148,7 @@ test('endpoint changes, incomplete settings and disable reject late replies', ()
     h.reply(fresh, 200, {...base, capacity_state: 'available'});
     h.reply(old, 200, {...base, capacity_state: 'queue_limited'});
     assert.equal(h.indicator._capacityItem.label.text, 'Capacity available');
-    h.indicator._refresh();
+    h.indicator._poller.refresh();
     const pending = h.requests.at(-1);
     h.settings.values['hive-token'] = '';
     h.settings.changed();
