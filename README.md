@@ -77,11 +77,11 @@ gnome-extensions prefs  hive-monitor@tunaos.org
 | **GitHub token** | Needs only `issues:write` on that repository |
 | **Labels** | Comma-separated, default `ai-fix-requested` |
 
-Tokens are stored in the login keyring through libsecret (Secret Service).
+The extension stores tokens in the login `keyring` through libsecret (Secret Service).
 Press **Save** next to a token after you edit it. Save an empty field to
-remove that token. Existing tokens move from GSettings to the keyring on
-first use; the old value is cleared only after the secure write succeeds.
-If the keyring is locked or unavailable, unlock it and retry in Settings.
+remove that token. Existing tokens move from GSettings to the `keyring` on
+first use; the extension clears the old value only after the secure write succeeds.
+If the `keyring` stays locked or is unavailable, unlock it and retry in Settings.
 
 ### About the hive token
 
@@ -103,7 +103,7 @@ Treat the hive token as a secret: it grants read access to your fleet's status.
 ## Requirements
 
 GNOME Shell 45–50 (ESM extensions), libsecret with its GObject introspection
-bindings (`Secret`), and a running Secret Service such as GNOME Keyring.
+bindings (`Secret`), and an active Secret Service such as `gnome-keyring`.
 
 ## License
 

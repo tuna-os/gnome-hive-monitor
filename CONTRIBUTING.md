@@ -21,7 +21,7 @@ Hive Monitor is a GNOME Shell extension for GNOME Shell 45–50. It uses standar
 
 - **Target Shell Versions**: GNOME Shell 45, 46, 47, 48, 49, 50
 - **Language**: JavaScript (ESM format)
-- **Dependencies**: Uses standard `gi://` modules (`GLib`, `Gio`, `GObject`, `Clutter`, `St`, `Adw`, `Gtk`, `Soup`), plus libsecret (`Secret`) and a running Secret Service.
+- **Dependencies**: Uses standard `gi://` modules (`GLib`, `Gio`, `GObject`, `Clutter`, `St`, `Adw`, `Gtk`, `Soup`), plus libsecret (`Secret`) and an active Secret Service.
 
 ## Local Development Setup
 
@@ -96,6 +96,6 @@ gnome-extensions pack --force --extra-source=schemas/
 2. **Atomic Changes**: Keep PRs focused on a single feature, bug fix, or documentation update.
 3. **Compatibility**: Ensure any new API usage remains compatible across the supported GNOME Shell versions (45–50).
 
-Credential storage regression checks: `node tests/test_credentials.mjs`.
-In a GNOME session, also test migration of both old tokens, a locked keyring,
-Save and removal in preferences, status polling, and filing an idea.
+To check credential storage for regressions, run `node tests/test_credentials.mjs`.
+In a GNOME session, also test migration of both old tokens, a locked `keyring`,
+Save and removal in preferences, status polls, and filing an idea.
