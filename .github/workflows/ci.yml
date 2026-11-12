@@ -45,7 +45,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6.3.0
         with:
-          node-version: '24'
+          node-version: '26'
 
       - name: Install GSettings schema compiler
         run: |
