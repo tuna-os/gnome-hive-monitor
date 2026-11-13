@@ -56,7 +56,7 @@ jobs:
         run: python3 -m unittest discover -s tests -v
 
       - name: Run JavaScript behavior tests
-        run: node --experimental-vm-modules --test tests/behavior.cjs
+        run: node --experimental-vm-modules --test tests/behavior.cjs tests/test_widget.cjs
 
       - name: Validate metadata.json
         run: python3 -m json.tool metadata.json > /dev/null
