@@ -35,11 +35,12 @@ async function runtime() {
         }
         abort() { this.aborted = true; }
     }
-    const Soup = {Session, Message: {new(method, url) {
+    const Soup = {Session, MessageFlags: {NO_REDIRECT: 2}, Message: {new(method, url) {
         if (url.includes('invalid')) return null;
-        return {method, url, headers: {}, request_headers: {append(key, value) {
+        return {method, url, headers: {}, flags: 0, request_headers: {append(key, value) {
             this.owner.headers[key] = value;
         }}, set_request_body_from_bytes(type, bytes) { this.body = bytes; },
+        add_flags(flags) { this.flags |= flags; },
         get_status() { return this.code; }};
     }}};
     const makeMessage = Soup.Message.new;
@@ -111,7 +112,7 @@ async function runtime() {
     const ext = new extension.namespace.default();
     ext.getSettings = () => settings;
     ext.enable();
-    return {github, hive, requests, indicator, values, ext,
+    return {github, hive, requests, indicator, values, ext, Soup,
         change(key, value) { values[key] = value; changed(); }};
 }
 
@@ -234,5 +235,26 @@ test('invalid transport URLs call only onInvalidUrl without sending a request', 
             url, 'token', callbacks);
         assert.deepEqual(calls, ['onInvalidUrl']);
         assert.equal(r.requests.length, before);
+    }
+});
+
+test('status request refuses redirects, so the token stays on the configured address', async () => {
+    const r = await runtime();
+    const noRedirect = r.Soup.MessageFlags.NO_REDIRECT;
+    // The poll the indicator sent on enable carries the token and the flag.
+    assert.equal(r.requests[0].msg.headers['X-Hive-Internal'], 'secret');
+    assert.equal(r.requests[0].msg.flags & noRedirect, noRedirect);
+    for (const code of [301, 302, 303, 307, 308]) {
+        const calls = [];
+        const callbacks = Object.fromEntries(['onSuccess', 'onAuthError', 'onError', 'onInvalidUrl']
+            .map(name => [name, (...args) => calls.push([name, ...args])]));
+        r.hive.fetchWidgetStatus(r.indicator._session, r.indicator._statusCancel,
+            'https://hive.example', 'token', callbacks);
+        const request = r.requests.at(-1);
+        assert.equal(request.msg.flags & noRedirect, noRedirect);
+        // A redirect is reported as itself, with the fix, not as a bare status.
+        request.reply(code, '{"mode":"elsewhere"}');
+        assert.deepEqual(calls, [['onError', `Hive redirected the request (HTTP ${code}).`,
+            'Set the final HTTPS address of the hive in Settings.']]);
     }
 });

@@ -58,9 +58,9 @@ function load() {
                     to_string: () => raw};
             }},
             timeout_add_seconds: () => 1, Source: {remove() {}}},
-        Soup: {Session, Message: {new(method, url) {
+        Soup: {Session, MessageFlags: {NO_REDIRECT: 2}, Message: {new(method, url) {
             return {method, url, request_headers: {values: {}, append(k, v) { this.values[k] = v; }},
-                get_status() { return this.status; }};
+                add_flags() {}, get_status() { return this.status; }};
         }}},
         St: {Label, Icon: class { constructor(props) { Object.assign(this, props); } },
             BoxLayout: class { add_child() {} }},
