@@ -31,8 +31,9 @@ import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js'
  *   onError because an invalid URL is an unconfigured-state, not a
  *   transient-error-state, in the caller's rendering.
  * @param {(short: string, detail: string) => void} callbacks.onError -
- *   called on a network error, an HTTP error status other than 401/403, or
- *   an unparsable body. Not called on cancellation.
+ *   called on a network error, a redirect (never followed), an HTTP error
+ *   status other than 401/403, or an unparsable body. Not called on
+ *   cancellation.
  * @param {(short: string, detail: string) => void} callbacks.onAuthError -
  *   called specifically on HTTP 401/403, distinguished from onError because
  *   "unreachable" and "your token is wrong" need different fixes.
@@ -50,6 +51,10 @@ export function fetchWidgetStatus(session, cancellable, url, token, {onSuccess, 
         return;
     }
     msg.request_headers.append('X-Hive-Internal', token);
+    // Soup follows a redirected GET to any http(s) address and sends the
+    // same request headers again, so a redirect would carry the token to an
+    // address the HTTPS check above never saw. Stop at the first reply.
+    msg.add_flags(Soup.MessageFlags.NO_REDIRECT);
 
     session.send_and_read_async(
         msg, GLib.PRIORITY_DEFAULT, cancellable, (session_, res) => {
@@ -71,6 +76,14 @@ export function fetchWidgetStatus(session, cancellable, url, token, {onSuccess, 
                 console.error(`[HiveMonitor] Authentication rejected by hive (HTTP ${code})`);
                 onAuthError(_('Hive rejected the token.'),
                     _('Check the hive token in Settings (HTTP %d).').format(code));
+                return;
+            }
+            if (code >= 300 && code < 400) {
+                // Named on purpose: the fix is a different address in
+                // Settings, which a bare status code does not suggest.
+                console.error(`[HiveMonitor] Hive redirected the status request (HTTP ${code}); not followed`);
+                onError(_('Hive redirected the request (HTTP %d).').format(code),
+                    _('Set the final HTTPS address of the hive in Settings.'));
                 return;
             }
             if (code !== 200) {
