@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -81,6 +82,48 @@ class TestGSettingsSchema(unittest.TestCase):
         self.assertEqual(range_tag.attrib.get("min"), "15")
         self.assertEqual(range_tag.attrib.get("max"), "3600")
 
+
+class TestPackCommand(unittest.TestCase):
+    """The documented pack command must ship every module the extension loads.
+
+    `gnome-extensions pack` adds only extension.js, prefs.js, metadata.json,
+    stylesheets and schemas on its own. Any other module needs an
+    --extra-source flag, or the ZIP holds an extension.js whose imports
+    cannot resolve and GNOME Shell refuses to load it.
+    """
+
+    ENTRY_POINTS = ("extension.js", "prefs.js")
+    DOCS = ("AGENTS.md", "CONTRIBUTING.md")
+    LOCAL_IMPORT = re.compile(r"""from\s+['"]\./([\w.-]+\.js)['"]""")
+
+    def local_modules(self):
+        seen = set()
+        pending = list(self.ENTRY_POINTS)
+        while pending:
+            name = pending.pop()
+            for dep in self.LOCAL_IMPORT.findall((REPO_ROOT / name).read_text(encoding="utf-8")):
+                if dep not in seen and dep not in self.ENTRY_POINTS:
+                    seen.add(dep)
+                    pending.append(dep)
+        return seen
+
+    def pack_sources(self, doc):
+        text = (REPO_ROOT / doc).read_text(encoding="utf-8").replace("\\\n", " ")
+        commands = [line for line in text.splitlines() if "gnome-extensions pack " in line]
+        self.assertTrue(commands, f"{doc} has no gnome-extensions pack command")
+        return [set(re.findall(r"--extra-source=(\S+)", cmd)) for cmd in commands]
+
+    def test_local_imports_found(self):
+        # Guards the regex: the extension is known to import its clients.
+        self.assertIn("hiveClient.js", self.local_modules())
+
+    def test_pack_command_includes_every_imported_module(self):
+        modules = self.local_modules()
+        for doc in self.DOCS:
+            for sources in self.pack_sources(doc):
+                with self.subTest(doc=doc):
+                    self.assertEqual(sorted(modules - sources), [],
+                                     f"{doc}: add --extra-source for each missing module")
 
 
 if __name__ == "__main__":
