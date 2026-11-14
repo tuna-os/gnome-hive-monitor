@@ -114,7 +114,8 @@ python3 -m json.tool metadata.json > /dev/null
 Verify that `gnome-extensions pack` can pack the extension:
 
 ```bash
-gnome-extensions pack --force --extra-source=schemas/
+gnome-extensions pack --force --extra-source=schemas/ \
+  --extra-source=hiveClient.js --extra-source=githubClient.js
 ```
 
 ## Pull Request Guidelines
