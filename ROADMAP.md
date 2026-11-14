@@ -4,6 +4,11 @@
 
 ---
 
+## Architecture work
+
+The [modularization roadmap](docs/modularization.md) tracks issue #66, the child
+refactorings, module contracts, and checks needed before that meta issue closes.
+
 ## Near-Term (Q3 2026)
 
 - **CI Automation & Validation**: Establish continuous integration workflows for GSchema compilation and linting via `eslint` / `gnome-extensions-tool`.
