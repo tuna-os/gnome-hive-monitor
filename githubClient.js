@@ -13,39 +13,11 @@ import Soup from 'gi://Soup?version=3.0';
 
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {isValidRepo} from './settingsValidation.js';
+
+export {isValidRepo} from './settingsValidation.js';
+
 const AGENT_URL = 'gnome-shell-hive-monitor/1';
-
-/* A GitHub "owner/name" and nothing else.
- *
- * This value is pasted into the request path, so it decides which endpoint
- * the token is sent to -- it is not just a label. GitHub's own rules for
- * both halves are alphanumerics plus the separators below, so anything
- * outside that set is rejected rather than escaped: "o/n#x" and "o/n?x"
- * truncate the path at the fragment/query and POST somewhere else, and
- * "a/b/../.." climbs out of /repos/ entirely.
- *
- * Kept deliberately strict: a stray character here is a typo to report, not
- * input to repair. */
-const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
-
-/**
- * Whether a string is a GitHub "owner/name" safe to place in a request path.
- *
- * Exported for the test suite; callers use fileIssue, which enforces it.
- *
- * @param {string} repo - the candidate "owner/name".
- * @returns {boolean} true if repo is well formed.
- */
-export function isValidRepo(repo) {
-    // '.' and '..' are legal against the regex but are path segments, not
-    // repository names.
-    if (typeof repo !== 'string' || repo.length > 512)
-        return false;
-    const name = repo.slice(repo.indexOf('/') + 1);
-    if (name === '.' || name === '..')
-        return false;
-    return REPO_RE.test(repo);
-}
 
 /**
  * File a new issue on a GitHub repo.
