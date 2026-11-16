@@ -23,6 +23,28 @@ async function runtime() {
     class Cancellable {
         cancel() { this.cancelled = true; }
     }
+    // Preferences doubles. A row has only members the real Adw rows have, so
+    // a call to a method libadwaita lacks fails here as it does in GJS.
+    const rows = {};
+    class Widget {
+        constructor(props = {}) { Object.assign(this, props); }
+        add() {}
+        add_css_class() {}
+    }
+    class Row extends Widget {
+        constructor(props) {
+            super(props);
+            this.handlers = {};
+            rows[this.title] = this;
+        }
+        set_text(text) { this.text = text; }
+        get_text() { return this.text; }
+        connect(signal, callback) { this.handlers[signal] = callback; }
+        // Typing changes the text and emits `changed`, once per character.
+        type(text) { this.text = text; this.handlers.changed?.(); }
+        // Adw emits `apply` only from a row that shows the apply button.
+        apply() { if (this.show_apply_button) this.handlers.apply?.(); }
+    }
     class Session {
         send_and_read_async(msg, priority, cancel, callback) {
             requests.push({msg, cancel, reply(code, body, error) {
@@ -60,7 +82,14 @@ async function runtime() {
         }}};
     let indicator;
     const platform = {
-        'gi://Gio': {default: {Cancellable, IOErrorEnum: {CANCELLED: 1}}},
+        'gi://Gio': {default: {Cancellable, IOErrorEnum: {CANCELLED: 1},
+            SettingsBindFlags: {DEFAULT: 0}}},
+        'gi://Adw': {default: {PreferencesPage: Widget, PreferencesGroup: Widget,
+            ActionRow: Widget, SpinRow: Widget, SwitchRow: Widget,
+            EntryRow: Row, PasswordEntryRow: Row}},
+        'gi://Gtk': {default: {Adjustment: Widget}},
+        'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js': {
+            ExtensionPreferences: class {}, gettext: text => text},
         'gi://GLib': {default: GLib},
         'gi://Soup?version=3.0': {default: Soup},
         'gi://Clutter': {default: {ActorAlign: {CENTER: 0}}},
@@ -108,11 +137,21 @@ async function runtime() {
     let changed;
     const settings = {get_string: key => values[key], get_int: () => 60,
         get_boolean: () => true, connect(signal, callback) { changed = callback; return 1; },
-        disconnect() { changed = null; }};
+        disconnect() { changed = null; },
+        set_string(key, value) { values[key] = value; changed?.(); }, bind() {}};
     const ext = new extension.namespace.default();
     ext.getSettings = () => settings;
     ext.enable();
-    return {github, hive, requests, indicator, values, ext, Soup,
+    // Build the preferences window against the settings the extension reads.
+    async function openPrefs() {
+        const module = await load(path.join(root, 'prefs.js'));
+        await module.evaluate();
+        const prefs = new module.namespace.default();
+        prefs.getSettings = () => settings;
+        prefs.fillPreferencesWindow(new Widget());
+        return rows;
+    }
+    return {github, hive, requests, indicator, values, ext, Soup, openPrefs,
         change(key, value) { values[key] = value; changed(); }};
 }
 
@@ -257,4 +296,21 @@ test('status request refuses redirects, so the token stays on the configured add
         assert.deepEqual(calls, [['onError', `Hive redirected the request (HTTP ${code}).`,
             'Set the final HTTPS address of the hive in Settings.']]);
     }
+});
+
+test('the hive URL saves on apply, so a half-typed address is never sent the token', async () => {
+    const r = await runtime();
+    const rows = await r.openPrefs();
+    const before = r.requests.length;
+    // "hive.example.co" is a registrable host on the way to "hive.example.com",
+    // and port 443 of that host is not the hive on 8443.
+    const final = 'https://hive.example.com:8443';
+    for (let i = 1; i <= final.length; i++)
+        rows['Hive URL'].type(final.slice(0, i));
+    assert.equal(r.values['hive-url'], 'https://hive.example');
+    assert.equal(r.requests.length, before);
+    rows['Hive URL'].apply();
+    assert.equal(r.values['hive-url'], final);
+    assert.deepEqual(r.requests.slice(before).map(q => q.msg.url), [`${final}/api/widget`]);
+    assert.equal(r.requests.at(-1).msg.headers['X-Hive-Internal'], 'secret');
 });
