@@ -32,10 +32,16 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         });
         page.add(conn);
 
-        const url = new Adw.EntryRow({title: _('Hive URL')});
-        url.set_placeholder_text(_('https://example.com'));
+        // Saved on apply (Enter or the row's apply button), not on every
+        // keystroke. The extension polls as soon as the address changes, so
+        // a half-typed one would be sent the token: "https://hive.example.co"
+        // is a real host on the way to "https://hive.example.com".
+        const url = new Adw.EntryRow({
+            title: _('Hive URL'),
+            show_apply_button: true,
+        });
         url.set_text(settings.get_string('hive-url'));
-        url.connect('changed', () => settings.set_string('hive-url', url.get_text()));
+        url.connect('apply', () => settings.set_string('hive-url', url.get_text()));
         conn.add(url);
 
         const token = new Adw.PasswordEntryRow({title: _('Hive Token')});
