@@ -26,6 +26,7 @@ async function runtime() {
     // Preferences doubles. A row has only members the real Adw rows have, so
     // a call to a method libadwaita lacks fails here as it does in GJS.
     const rows = {};
+    const toasts = [];
     class Widget {
         constructor(props = {}) { Object.assign(this, props); }
         add() {}
@@ -78,6 +79,7 @@ async function runtime() {
             const url = new URL(raw);
             return {get_scheme: () => url.protocol.slice(0, -1),
                 get_host: () => url.hostname, get_userinfo: () => url.username,
+                get_port: () => url.port ? Number(url.port) : -1,
                 to_string: () => url.href};
         }}};
     let indicator;
@@ -85,7 +87,7 @@ async function runtime() {
         'gi://Gio': {default: {Cancellable, IOErrorEnum: {CANCELLED: 1},
             SettingsBindFlags: {DEFAULT: 0}}},
         'gi://Adw': {default: {PreferencesPage: Widget, PreferencesGroup: Widget,
-            ActionRow: Widget, SpinRow: Widget, SwitchRow: Widget,
+            ActionRow: Widget, SpinRow: Widget, SwitchRow: Widget, Toast: Widget,
             EntryRow: Row, PasswordEntryRow: Row}},
         'gi://Gtk': {default: {Adjustment: Widget}},
         'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js': {
@@ -148,10 +150,12 @@ async function runtime() {
         await module.evaluate();
         const prefs = new module.namespace.default();
         prefs.getSettings = () => settings;
-        prefs.fillPreferencesWindow(new Widget());
+        const window = new Widget();
+        window.add_toast = toast => toasts.push(toast);
+        prefs.fillPreferencesWindow(window);
         return rows;
     }
-    return {github, hive, requests, indicator, values, ext, Soup, openPrefs,
+    return {github, hive, requests, indicator, values, ext, Soup, openPrefs, toasts,
         change(key, value) { values[key] = value; changed(); }};
 }
 
@@ -300,17 +304,58 @@ test('status request refuses redirects, so the token stays on the configured add
 
 test('the hive URL saves on apply, so a half-typed address is never sent the token', async () => {
     const r = await runtime();
-    const rows = await r.openPrefs();
-    const before = r.requests.length;
     // "hive.example.co" is a registrable host on the way to "hive.example.com",
     // and port 443 of that host is not the hive on 8443.
     const final = 'https://hive.example.com:8443';
+    // The saved address is on the same host, so the token stays with it.
+    r.change('hive-url', `${final}/old`);
+    const rows = await r.openPrefs();
+    const before = r.requests.length;
     for (let i = 1; i <= final.length; i++)
         rows['Hive URL'].type(final.slice(0, i));
-    assert.equal(r.values['hive-url'], 'https://hive.example');
+    assert.equal(r.values['hive-url'], `${final}/old`);
     assert.equal(r.requests.length, before);
     rows['Hive URL'].apply();
     assert.equal(r.values['hive-url'], final);
     assert.deepEqual(r.requests.slice(before).map(q => q.msg.url), [`${final}/api/widget`]);
     assert.equal(r.requests.at(-1).msg.headers['X-Hive-Internal'], 'secret');
+});
+
+test('a new hive host is not sent the token saved for the old one', async () => {
+    const r = await runtime();
+    const rows = await r.openPrefs();
+    const sent = () => r.requests.map(q => [q.msg.url, q.msg.headers['X-Hive-Internal']]);
+    const before = r.requests.length;
+    // Another host, and the same host on another port: both are a different
+    // server, and "secret" was entered for https://hive.example.
+    for (const next of ['https://other.example', 'https://hive.example:8443', '']) {
+        r.change('hive-token', 'secret');
+        r.change('hive-url', 'https://hive.example');
+        rows['Hive Token'].set_text('secret');
+        const from = r.requests.length;
+        const shown = r.toasts.length;
+        rows['Hive URL'].type(next);
+        rows['Hive URL'].apply();
+        assert.equal(r.values['hive-url'], next);
+        assert.equal(r.values['hive-token'], '', next);
+        assert.equal(rows['Hive Token'].get_text(), '', next);
+        assert.equal(r.toasts.length, shown + 1, next);
+        assert.deepEqual(sent().slice(from), [], next);
+    }
+    // The token typed after the address goes to that address.
+    rows['Hive URL'].type('https://other.example');
+    rows['Hive URL'].apply();
+    rows['Hive Token'].type('other-secret');
+    assert.deepEqual(sent().at(-1), ['https://other.example/api/widget', 'other-secret']);
+    // A new path on the same host, and a first address, keep the token.
+    const shown = r.toasts.length;
+    rows['Hive URL'].type('https://other.example/base');
+    rows['Hive URL'].apply();
+    assert.deepEqual(sent().at(-1), ['https://other.example/base/api/widget', 'other-secret']);
+    r.change('hive-url', '');
+    rows['Hive URL'].type('https://first.example');
+    rows['Hive URL'].apply();
+    assert.deepEqual(sent().at(-1), ['https://first.example/api/widget', 'other-secret']);
+    assert.equal(r.toasts.length, shown);
+    assert.ok(before > 0);
 });
