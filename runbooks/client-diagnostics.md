@@ -9,16 +9,20 @@ This runbook covers operational troubleshooting, diagnostic log inspection, and 
 ### 1. Inspect GNOME Shell Logs
 To filter extension diagnostic logs from systemd journald:
 ```bash
-journalctl --user -f -o cat | grep "\[GNOME Hive Monitor\]"
+journalctl --user -f -o cat | grep -F '[HiveMonitor]'
 ```
 
 Common log entries and actions:
-- `[GNOME Hive Monitor] HTTP Error: ...` -> Check local network connectivity or Hive backend API health.
-- `[GNOME Hive Monitor] Token rejected (HTTP 401/403)` -> Verify user GitHub Personal Access Token configured in Extension Preferences (`prefs.js`).
-- `[GNOME Hive Monitor] JSON Parse Error: ...` -> Verify backend API response format.
+- `[HiveMonitor] Network error fetching widget status: ...` -> Check the local network connection and the **Hive URL** setting.
+- `[HiveMonitor] HTTP error from hive (HTTP 503)` -> Check the health of the Hive backend API.
+- `[HiveMonitor] Authentication rejected by hive (HTTP 401)` -> Check the **Hive token** setting. It must be the `HIVE_DASHBOARD_TOKEN` of the hive. The GitHub token does not apply to this request.
+- `[HiveMonitor] Hive redirected the status request (HTTP 301); not followed` -> Set the final HTTPS address of the hive in the **Hive URL** setting.
+- `[HiveMonitor] Failed to parse hive JSON response: ...` -> Check the response format of the backend API.
+- `[HiveMonitor] Network error filing idea to GitHub: ...` -> Check the local network connection to `api.github.com`.
+- `[HiveMonitor] GitHub API error filing idea on owner/name: ...` -> Check the **Repository** setting and the **GitHub token** setting. The token needs `issues:write` on that repository.
 
 ### 2. Verify Extension State
-Check extension enablement state via `gsettings`:
+Check the state of the extension:
 ```bash
 gnome-extensions info hive-monitor@tunaos.org
 ```
