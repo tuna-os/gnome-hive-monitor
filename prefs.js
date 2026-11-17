@@ -8,12 +8,28 @@
 
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
 import {
     ExtensionPreferences,
     gettext as _,
 } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+
+/* The host and port a hive address names, or '' when it names none.
+ *
+ * The hive token belongs to the server it was entered for, and this is what
+ * identifies that server. A path is not part of it: "/hive" on the same host
+ * is the same server. */
+function hiveHost(raw) {
+    try {
+        const uri = GLib.Uri.parse(raw.trim(), GLib.UriFlags.NONE);
+        const host = uri.get_host();
+        return host ? `${host.toLowerCase()}:${uri.get_port()}` : '';
+    } catch {
+        return '';
+    }
+}
 
 export default class HiveMonitorPrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -41,13 +57,29 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
             show_apply_button: true,
         });
         url.set_text(settings.get_string('hive-url'));
-        url.connect('apply', () => settings.set_string('hive-url', url.get_text()));
         conn.add(url);
 
         const token = new Adw.PasswordEntryRow({title: _('Hive Token')});
         token.set_text(settings.get_string('hive-token'));
         token.connect('changed', () => settings.set_string('hive-token', token.get_text()));
         conn.add(token);
+
+        url.connect('apply', () => {
+            const next = url.get_text();
+            // The saved token was entered for the old host. The extension
+            // polls the new address as soon as it is saved, so a token still
+            // set then would be sent to a server it was never meant for.
+            // Forget it first; the user enters the one for the new host.
+            const was = hiveHost(settings.get_string('hive-url'));
+            if (was && hiveHost(next) !== was && settings.get_string('hive-token')) {
+                settings.set_string('hive-token', '');
+                token.set_text('');
+                window.add_toast(new Adw.Toast({
+                    title: _('Enter the token for the new hive address.'),
+                }));
+            }
+            settings.set_string('hive-url', next);
+        });
 
         const hint = new Adw.ActionRow({
             title: _('Where the token comes from'),
