@@ -34,7 +34,7 @@ Run these commands from the repository root before submitting a pull request:
 ```bash
 # Run the Python and Node tests.
 python3 -m unittest discover -s tests -v
-node --test tests/test_widget.cjs
+node --experimental-vm-modules --test tests/test_widget.cjs
 
 # Install dependencies and check JavaScript lint.
 npm ci --ignore-scripts
