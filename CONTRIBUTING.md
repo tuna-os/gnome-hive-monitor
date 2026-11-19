@@ -115,7 +115,8 @@ Verify that `gnome-extensions pack` can pack the extension:
 
 ```bash
 gnome-extensions pack --force --extra-source=schemas/ \
-  --extra-source=hiveClient.js --extra-source=githubClient.js
+  --extra-source=hiveClient.js --extra-source=githubClient.js \
+  --extra-source=ideaValidation.js
 ```
 
 ## Pull Request Guidelines

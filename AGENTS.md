@@ -46,7 +46,8 @@ python3 -m json.tool metadata.json > /dev/null
 
 # Check extension packaging.
 gnome-extensions pack --force --extra-source=schemas/ \
-  --extra-source=hiveClient.js --extra-source=githubClient.js
+  --extra-source=hiveClient.js --extra-source=githubClient.js \
+  --extra-source=ideaValidation.js
 ```
 
 The Python tests use the standard library. Some tests check source text or
