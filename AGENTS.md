@@ -20,10 +20,14 @@ as GitHub issues.
 | `prefs.js` | Preferences window and settings bindings |
 | `hiveClient.js` | Hive widget status requests |
 | `githubClient.js` | GitHub issue requests and repository validation |
+| `ideaValidation.js` | Checks for the New Idea dialog fields |
 | `metadata.json` | Extension UUID, schema ID, and supported Shell versions |
 | `schemas/` | GSettings XML; compiled schema files are build output |
 | `tests/test_extension.py` | Python tests for metadata, schema, and selected logic |
 | `tests/test_widget.cjs` | Node tests for widget status and display logic |
+| `tests/behavior.cjs` | Node tests for the extension and the HTTP clients |
+| `tests/test_idea_validation.mjs` | Node tests for `ideaValidation.js` |
+| `tests/gnome-runtime.cjs` | GNOME test doubles for the Node tests; holds no tests |
 | `docs/observability.md` | Logs and diagnostic events |
 | `runbooks/client-diagnostics.md` | Steps to diagnose client failures |
 
@@ -34,7 +38,7 @@ Run these commands from the repository root before submitting a pull request:
 ```bash
 # Run the Python and Node tests.
 python3 -m unittest discover -s tests -v
-node --experimental-vm-modules --test tests/test_widget.cjs
+node --experimental-vm-modules --test 'tests/*.cjs' 'tests/*.mjs'
 
 # Install dependencies and check JavaScript lint.
 npm ci --ignore-scripts
@@ -69,10 +73,21 @@ Keep credentials out of logs, tests, issues, and PRs.
 
 ## CI and pull requests
 
-The `CI` workflow runs Python tests, metadata and schema checks, and JavaScript
-syntax checks. The `JavaScript lint` workflow runs ESLint. CI does not test
-packaging or the live Shell UI. Include local check results and any manual
-desktop checks in the PR.
+The `CI` workflow runs the Python tests, the Node tests in `tests/`, metadata
+and schema checks, and JavaScript syntax checks. The `JavaScript lint` workflow
+runs ESLint. CI does not test packaging or the live Shell UI. Include local
+check results and any manual desktop checks in the PR.
+
+The `actions-security` workflow checks the workflow files. It runs
+`gh actions-lock --verify`, which fails when `.github/workflows/actions.lock`
+does not match the `uses:` references, and it runs `zizmor`. When you add or
+change a `uses:` reference, update the lock file and commit it in the same PR.
+The workflow installs the same `gh` extension at the same version:
+
+```bash
+gh extension install github/gh-actions-lock --pin v0.4.1
+gh actions-lock
+```
 
 The `Prose` workflow checks Markdown with the shared Simplified Technical
 English linter and the `.ste-budget` limit. To run the same budget check locally,
