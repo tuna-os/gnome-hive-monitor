@@ -190,6 +190,7 @@ test('a new hive host is not sent the token saved for the old one', async () => 
     rows['Hive URL'].type('https://other.example');
     rows['Hive URL'].apply();
     rows['Hive Token'].type('other-secret');
+    rows['Hive Token'].apply();
     assert.deepEqual(sent().at(-1), ['https://other.example/api/widget', 'other-secret']);
     // A new path on the same host, and a first address, keep the token.
     const shown = r.toasts.length;
@@ -202,4 +203,48 @@ test('a new hive host is not sent the token saved for the old one', async () => 
     assert.deepEqual(sent().at(-1), ['https://first.example/api/widget', 'other-secret']);
     assert.equal(r.toasts.length, shown);
     assert.ok(before > 0);
+});
+
+test('no order of edits sends a token to a hive it was not confirmed for', async () => {
+    // The saved hive and its token, and the hive the user moves to.
+    const old = ['https://hive.example', 'secret'];
+    const next = ['https://other.example', 'other-secret'];
+    const steps = {
+        'type address': rows => rows['Hive URL'].type(next[0]),
+        'apply address': rows => rows['Hive URL'].apply(),
+        // One character at a time, as a keyboard does.
+        'type token': rows => {
+            for (let i = 1; i <= next[1].length; i++)
+                rows['Hive Token'].type(next[1].slice(0, i));
+        },
+        'apply token': rows => rows['Hive Token'].apply(),
+    };
+    const names = Object.keys(steps);
+    const length = 4;
+    let requests = 0;
+    // Every sequence of four steps, repeats included.
+    for (let n = 0; n < names.length ** length; n++) {
+        const order = Array.from({length},
+            (_, i) => names[Math.floor(n / names.length ** i) % names.length]);
+        const r = await runtime();
+        const rows = await r.openPrefs();
+        const from = r.requests.length;
+        // A pair may go out after an apply showed its two halves together.
+        const confirmed = [old.join(' ')];
+        for (const name of order) {
+            if (name.startsWith('apply'))
+                confirmed.push(`${rows['Hive URL'].get_text()} ${rows['Hive Token'].get_text()}`);
+            steps[name](rows);
+        }
+        for (const request of r.requests.slice(from)) {
+            const pair = `${request.msg.url.replace(/\/api\/widget$/, '')} ` +
+                request.msg.headers['X-Hive-Internal'];
+            assert.ok(confirmed.includes(pair), `${order.join(', ')}: sent ${pair}`);
+            // Nobody typed the old token for the new hive, whatever was applied.
+            assert.notEqual(pair, `${next[0]} ${old[1]}`, order.join(', '));
+            requests++;
+        }
+    }
+    // The orders that end with both halves applied do reach the new hive.
+    assert.ok(requests > 0);
 });
