@@ -59,27 +59,49 @@ export default class HiveMonitorPrefs extends ExtensionPreferences {
         url.set_text(settings.get_string('hive-url'));
         conn.add(url);
 
-        const token = new Adw.PasswordEntryRow({title: _('Hive Token')});
+        // Saved on apply too. Saved on every keystroke, a token typed for an
+        // address still waiting in the row above went to the old address.
+        const token = new Adw.PasswordEntryRow({
+            title: _('Hive Token'),
+            show_apply_button: true,
+        });
         token.set_text(settings.get_string('hive-token'));
-        token.connect('changed', () => settings.set_string('hive-token', token.get_text()));
         conn.add(token);
 
-        url.connect('apply', () => {
+        // Apply on either row saves the pair the two rows show. The extension
+        // sends the saved token to the saved address as soon as one of them
+        // changes, so the pair is never stored half old and half new.
+        const save = () => {
             const next = url.get_text();
-            // The saved token was entered for the old host. The extension
-            // polls the new address as soon as it is saved, so a token still
-            // set then would be sent to a server it was never meant for.
-            // Forget it first; the user enters the one for the new host.
+            const typed = token.get_text();
+            const saved = settings.get_string('hive-token');
+            const moved = next !== settings.get_string('hive-url');
+            // The saved token was entered for the old host. Left in the row
+            // unchanged, it is still that token: forget it rather than send
+            // it to a server it was never meant for. The user enters the one
+            // for the new host.
             const was = hiveHost(settings.get_string('hive-url'));
-            if (was && hiveHost(next) !== was && settings.get_string('hive-token')) {
+            if (was && hiveHost(next) !== was && saved && typed === saved) {
                 settings.set_string('hive-token', '');
                 token.set_text('');
                 window.add_toast(new Adw.Toast({
                     title: _('Enter the token for the new hive address.'),
                 }));
+                settings.set_string('hive-url', next);
+                return;
             }
-            settings.set_string('hive-url', next);
-        });
+            // Nothing is polled while the token is empty. Empty it across an
+            // address change so that neither the old address gets the new
+            // token nor the new address the old one.
+            if (moved && typed !== saved)
+                settings.set_string('hive-token', '');
+            if (moved)
+                settings.set_string('hive-url', next);
+            if (typed !== settings.get_string('hive-token'))
+                settings.set_string('hive-token', typed);
+        };
+        url.connect('apply', save);
+        token.connect('apply', save);
 
         const hint = new Adw.ActionRow({
             title: _('Where the token comes from'),
