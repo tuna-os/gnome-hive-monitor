@@ -248,3 +248,25 @@ test('no order of edits sends a token to a hive it was not confirmed for', async
     // The orders that end with both halves applied do reach the new hive.
     assert.ok(requests > 0);
 });
+
+test('a filed idea is announced and refreshes the queue at once; a refused one only reports', async () => {
+    const r = await runtime();
+    const before = r.requests.length;
+    r.indicator._fileIdea('o/n', 'github', 'Title', 'Body');
+    const post = r.requests.at(-1);
+    assert.equal(post.msg.method, 'POST');
+    post.reply(201, '{"number":42,"html_url":"https://github.com/o/n/issues/42"}');
+    assert.deepEqual(r.notices, [['Hive Monitor', 'Filed #42 on o/n.']]);
+    // The POST plus one immediate status poll, not a wait for the next interval.
+    assert.equal(r.requests.length, before + 2);
+    assert.equal(r.requests.at(-1).msg.method, 'GET');
+
+    r.indicator._fileIdea('o/n', 'github', 'Title', 'Body');
+    const refused = r.requests.at(-1);
+    const polls = r.requests.length;
+    refused.reply(422, '{"message":"denied"}');
+    assert.equal(r.notices.length, 2);
+    assert.equal(r.notices[1][0], 'Hive Monitor');
+    assert.notEqual(r.notices[1][1], '');
+    assert.equal(r.requests.length, polls, 'a refusal must not trigger a poll');
+});
