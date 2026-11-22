@@ -89,6 +89,7 @@ async function runtime() {
                 to_string: () => url.href};
         }}};
     let indicator;
+    const notices = [];
     const platform = {
         'gi://Gio': {default: {Cancellable, IOErrorEnum: {CANCELLED: 1},
             SettingsBindFlags: {DEFAULT: 0}}},
@@ -104,7 +105,8 @@ async function runtime() {
         'gi://St': {default: {BoxLayout: Actor, Icon: Actor, Label: Actor}},
         'gi://GObject': {default: {registerClass: klass => klass}},
         'resource:///org/gnome/shell/ui/main.js': {
-            panel: {addToStatusArea(uuid, value) { indicator = value; }}, notify() {}},
+            panel: {addToStatusArea(uuid, value) { indicator = value; }},
+            notify(title, message) { notices.push([title, message]); }},
         'resource:///org/gnome/shell/ui/panelMenu.js': {Button: Actor},
         'resource:///org/gnome/shell/ui/popupMenu.js': {
             PopupMenuItem: Actor, PopupSeparatorMenuItem: Actor},
@@ -161,7 +163,7 @@ async function runtime() {
         prefs.fillPreferencesWindow(window);
         return rows;
     }
-    return {github, hive, requests, indicator, values, ext, Soup, openPrefs, toasts,
+    return {github, hive, requests, indicator, values, ext, Soup, openPrefs, toasts, notices,
         change(key, value) { values[key] = value; changed(); }};
 }
 
