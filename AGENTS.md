@@ -26,6 +26,7 @@ as GitHub issues.
 | `tests/test_extension.py` | Python tests for metadata, schema, and selected logic |
 | `tests/test_widget.cjs` | Node tests for widget status and display logic |
 | `tests/behavior.cjs` | Node tests for the extension and the HTTP clients |
+| `tests/github_client.cjs` | Node tests for the GitHub issue request and its replies |
 | `tests/test_idea_validation.mjs` | Node tests for `ideaValidation.js` |
 | `tests/gnome-runtime.cjs` | GNOME test doubles for the Node tests; holds no tests |
 | `docs/observability.md` | Logs and diagnostic events |
