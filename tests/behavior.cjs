@@ -37,8 +37,11 @@ test('settings replace status ownership, preserve idea POST, and gate late repli
         old.reply(code, body, error);
         assert.equal(r.indicator._label.text, 'BUSY 3/2');
     }
+    // `fresh` is answered. Disable ends a poll that is still in flight.
+    r.indicator._refresh();
+    const pending = r.requests.at(-1);
     r.ext.disable();
-    assert.equal(fresh.cancel.cancelled, true);
+    assert.equal(pending.cancel.cancelled, true);
     assert.equal(idea.cancel.cancelled, true);
 });
 
@@ -269,4 +272,104 @@ test('a filed idea is announced and refreshes the queue at once; a refused one o
     assert.equal(r.notices[1][0], 'Hive Monitor');
     assert.notEqual(r.notices[1][1], '');
     assert.equal(r.requests.length, polls, 'a refusal must not trigger a poll');
+});
+
+// The extension runs inside GNOME Shell: a reply held in memory is held in
+// the memory of the Shell. The hive sends the reply, so the hive must not
+// decide how much of it is held.
+test('a status reply is read up to a limit, whatever its status or encoding', async () => {
+    const r = await runtime();
+    const limit = 64 * 1024;
+    const status = '{"mode":"busy","issues":1,"prs":1}';
+    const padded = length => status + ' '.repeat(length - status.length);
+    const huge = padded(8 * 1024 * 1024);
+    const poll = (code, body, options) => {
+        const calls = [];
+        const callbacks = Object.fromEntries(['onSuccess', 'onAuthError', 'onError', 'onInvalidUrl']
+            .map(name => [name, (...args) => calls.push([name, ...args])]));
+        r.hive.fetchWidgetStatus(r.indicator._session, r.indicator._statusCancel,
+            'https://hive.example', 'token', callbacks);
+        const request = r.requests.at(-1);
+        request.reply(code, body, null, options);
+        return {request, calls};
+    };
+    const tooLong = [['onError', 'Unreadable response.', `The reply is longer than ${limit} bytes.`]];
+
+    // The limit itself is a good reply; one byte more is not.
+    const atLimit = poll(200, padded(limit));
+    assert.deepEqual(atLimit.calls.map(call => call[0]), ['onSuccess']);
+    assert.equal(atLimit.calls[0][1].issues, 1);
+    assert.equal(atLimit.request.closed, true);
+    assert.deepEqual(poll(200, padded(limit + 1)).calls, tooLong);
+
+    // A long reply is refused, and the rest of it is not taken.
+    const long = poll(200, huge);
+    assert.deepEqual(long.calls, tooLong);
+    assert.ok(long.request.read <= limit + 1, `read ${long.request.read}`);
+    assert.equal(long.request.closed, true);
+
+    // Small on the wire, long after decoding: the decoded bytes count.
+    const packed = poll(200, huge, {compressed: true});
+    assert.deepEqual(packed.calls, tooLong);
+    assert.ok(packed.request.read <= limit + 1, `read ${packed.request.read}`);
+
+    // Soup collects these bodies itself before it reports the status. That
+    // must stop at the limit too.
+    for (const code of [401, 407, 421]) {
+        const {request, calls} = poll(code, huge);
+        assert.deepEqual(calls, tooLong, String(code));
+        assert.ok(request.collected <= limit + 4096, `${code}: collected ${request.collected}`);
+    }
+    // A refusal of ordinary size is still reported as what it is.
+    assert.deepEqual(poll(401, '{"error":"bad token"}').calls.map(call => call[0]), ['onAuthError']);
+
+    // The body of any other status is not read at all, and the transfer ends.
+    for (const [code, expected] of [[403, 'onAuthError'], [302, 'onError'], [500, 'onError']]) {
+        const {request, calls} = poll(code, huge);
+        assert.deepEqual(calls.map(call => call[0]), [expected], String(code));
+        assert.equal(request.read, 0, String(code));
+        assert.equal(request.closed, true, String(code));
+    }
+
+    // HTTP/1.1: Soup then takes a body from the socket only when it is read.
+    assert.equal(long.request.msg.forceHttp1, true);
+});
+
+test('a status request ends with the caller, and a finished one lets go of the caller', async () => {
+    const r = await runtime();
+    const calls = [];
+    const callbacks = Object.fromEntries(['onSuccess', 'onAuthError', 'onError', 'onInvalidUrl']
+        .map(name => [name, () => calls.push(name)]));
+    const caller = r.indicator._statusCancel;
+    const held = caller.handlers.size;
+
+    r.hive.fetchWidgetStatus(r.indicator._session, caller, 'https://hive.example', 'token', callbacks);
+    const answered = r.requests.at(-1);
+    assert.equal(caller.handlers.size, held + 1);
+    answered.reply(200, '{"mode":"busy"}');
+    assert.deepEqual(calls, ['onSuccess']);
+    // One poll a minute for days: nothing may pile up on the caller.
+    assert.equal(caller.handlers.size, held);
+
+    for (const code of [200, 500]) {
+        r.hive.fetchWidgetStatus(r.indicator._session, caller, 'https://hive.example', 'token', callbacks);
+        const failed = r.requests.at(-1);
+        failed.reply(code, 'bad');
+        assert.equal(caller.handlers.size, held, String(code));
+    }
+    r.hive.fetchWidgetStatus(r.indicator._session, caller, 'https://hive.example', 'token', callbacks);
+    r.requests.at(-1).reply(0, '', new Error('offline'));
+    assert.equal(caller.handlers.size, held);
+
+    // The request has its own cancellable, and the caller's still ends it.
+    calls.length = 0;
+    r.hive.fetchWidgetStatus(r.indicator._session, caller, 'https://hive.example', 'token', callbacks);
+    const pending = r.requests.at(-1);
+    assert.notEqual(pending.cancel, caller);
+    assert.equal(pending.cancel.cancelled, undefined);
+    caller.cancel();
+    assert.equal(pending.cancel.cancelled, true);
+    // A reply that arrives after that is not reported, not even as an error.
+    pending.reply(200, '{"mode":"late"}');
+    assert.deepEqual(calls, []);
 });
