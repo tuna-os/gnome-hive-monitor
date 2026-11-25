@@ -26,9 +26,24 @@ async function runtime() {
         set_text(text) { this.text = text; }
         destroy() { this.destroyed = true; }
     }
+    // As Gio.Cancellable: connect() runs the callback at once on a cancelled
+    // object and returns 0, cancel() runs each connected callback once.
     class Cancellable {
-        cancel() { this.cancelled = true; }
+        constructor() { this.handlers = new Map(); this.connected = 0; }
+        cancel() {
+            if (this.cancelled) return;
+            this.cancelled = true;
+            for (const callback of this.handlers.values()) callback();
+        }
+        is_cancelled() { return this.cancelled === true; }
+        connect(callback) {
+            if (this.cancelled) { callback(); return 0; }
+            this.handlers.set(++this.connected, callback);
+            return this.connected;
+        }
+        disconnect(id) { this.handlers.delete(id); }
     }
+    const cancelledError = () => ({matches: () => true, message: 'Operation was cancelled'});
     // Preferences doubles. A row has only members the real Adw rows have, so
     // a call to a method libadwaita lacks fails here as it does in GJS.
     const rows = {};
@@ -52,7 +67,58 @@ async function runtime() {
         // Adw emits `apply` only from a row that shows the apply button.
         apply() { if (this.show_apply_button) this.handlers.apply?.(); }
     }
+    // The pieces a body arrives in. Soup hands over what it has, not what was
+    // asked for.
+    const PIECE = 4096;
     class Session {
+        // As Soup.Session.send_async: the callback runs when the status is
+        // known, and the body is read from the stream that send_finish
+        // returns. reply() answers the request:
+        //   reply(code, body, error, {compressed})
+        // `compressed` stands for a reply that is small on the wire and
+        // `body` after decoding. The request records what the client took:
+        // `read` bytes from the stream, `collected` bytes that Soup itself
+        // read before it reported the status, and `closed`.
+        send_async(msg, priority, cancel, callback) {
+            const request = {msg, cancel, read: 0, collected: 0, closed: false,
+                reply(code, body, error, {compressed = false} = {}) {
+                    msg.code = code;
+                    const bytes = new TextEncoder().encode(body);
+                    const arrive = length => msg.handlers['got-body-data']?.(msg, compressed ? 1 : length);
+                    let gathered = null;
+                    // Soup reads the whole body of these replies before it
+                    // reports them, to answer a challenge or to send again.
+                    if (!error && [401, 407, 421].includes(code)) {
+                        while (request.collected < bytes.length && !cancel.cancelled) {
+                            const length = Math.min(PIECE, bytes.length - request.collected);
+                            request.collected += length;
+                            arrive(length);
+                        }
+                        if (cancel.cancelled) gathered = cancelledError();
+                    }
+                    let offset = gathered === null && request.collected ? bytes.length : 0;
+                    const stream = {
+                        read_bytes_async(count, priority_, cancel_, done) {
+                            done({read_bytes_finish() {
+                                if (cancel_.cancelled) throw cancelledError();
+                                const piece = bytes.subarray(offset, offset + Math.min(count, PIECE));
+                                offset += piece.length;
+                                request.read += piece.length;
+                                if (piece.length) arrive(piece.length);
+                                if (cancel_.cancelled) throw cancelledError();
+                                return {get_size: () => piece.length, get_data: () => piece};
+                            }}, {});
+                        },
+                        close_async() { request.closed = true; },
+                    };
+                    callback({send_finish() {
+                        if (error) throw error;
+                        if (gathered) throw gathered;
+                        return stream;
+                    }}, {});
+                }};
+            requests.push(request);
+        }
         send_and_read_async(msg, priority, cancel, callback) {
             requests.push({msg, cancel, reply(code, body, error) {
                 msg.code = code;
@@ -70,6 +136,8 @@ async function runtime() {
             this.owner.headers[key] = value;
         }}, set_request_body_from_bytes(type, bytes) { this.body = bytes; },
         add_flags(flags) { this.flags |= flags; },
+        handlers: {}, connect(signal, callback) { this.handlers[signal] = callback; },
+        set_force_http1(value) { this.forceHttp1 = value; },
         get_status() { return this.code; }};
     }}};
     const makeMessage = Soup.Message.new;
